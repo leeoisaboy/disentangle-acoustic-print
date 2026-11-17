@@ -12,7 +12,7 @@ The implementation consolidates the core geometric operators and the non-invasiv
 | `telemetry.py` | 4-track white-box telemetry serializer (`build_telemetry_packet`) | Acoustic Print Studio |
 | `stream_engine.py` | `RollingAcousticStream` ring buffer, 3-second dual-tempo enrollment, live sliding-window matching | Acoustic Print Studio |
 | `studio/app.py` | Plan A FastAPI WebSocket + REST server and unified CLI launcher | Acoustic Print Studio |
-| `studio/gradio_app.py` | Plan B Gradio Streaming dashboard for Hugging Face Spaces | Acoustic Print Studio |
+| `studio/gradio_app.py` | Plan B Gradio streaming studio for Hugging Face Spaces | Acoustic Print Studio |
 | `studio/index.html` | Light, progressive-disclosure HTML5 Canvas 4-track white-box oscilloscope | Acoustic Print Studio |
 | `studio/static/` | Local CSS design system and deterministic Canvas renderer/capture API | Acoustic Print Studio |
 

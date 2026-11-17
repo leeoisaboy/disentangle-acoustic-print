@@ -36,7 +36,10 @@
       amber: "#b7791f",
       violet: "#7b6bb0"
     };
+    const CANVAS_SANS = '"Google Sans Text", "DM Sans", "Noto Sans SC", -apple-system, "Segoe UI", "PingFang SC", sans-serif';
+    const CANVAS_MONO = '"Roboto Mono", "SFMono-Regular", Consolas, monospace';
     document.documentElement.classList.toggle("capture-mode", CAPTURE_MODE);
+    document.documentElement.classList.add("js");
 
     // Deterministic seeded PRNG (Mulberry32)
     function createRng(seed) {
@@ -425,7 +428,9 @@
       // Last dual-tempo enrollment trajectories for Mode 1 preview
       lastEnrollNormal: [],
       lastEnrollSlow: [],
-      lastTelemetry: null
+      lastTelemetry: null,
+      smoothedTelemetry: null,
+      streamCursor: 0
     };
 
     // Initialize orthogonal speaker subspace basis and 4 dialect templates
@@ -921,7 +926,7 @@
     }
 
     // Immediately flush a phrase into the center of the rolling buffer so it's visible even when paused
-    function injectPhraseImmediate(key) {
+    function injectPhraseImmediate(key, announce = true) {
       studioState.activePhraseKey = key;
       studioState.selectedTemplateKey = key;
       const selectEl = document.getElementById("selectCompareTemplate");
@@ -956,7 +961,9 @@
       }
       playSynthesizedPhraseSound(key, studioState.speakingRate);
       renderAllUI(computeFullTelemetry());
-      showToast(`已注入「${key}」(语速 ${studioState.speakingRate.toFixed(2)}x, 音色干扰 ${Math.round(studioState.speakerNuisance * 100)}%)`);
+      if (announce) {
+        showToast(`已注入「${key}」(语速 ${studioState.speakingRate.toFixed(2)}x, 音色干扰 ${Math.round(studioState.speakerNuisance * 100)}%)`);
+      }
     }
 
     // =========================================================================
@@ -978,6 +985,29 @@
       return { ctx, w, h };
     }
 
+    function sampleSeries(values, position) {
+      if (!values || values.length === 0) return 0.0;
+      const pos = Math.max(0.0, Math.min(values.length - 1, position));
+      const lo = Math.floor(pos);
+      const hi = Math.min(lo + 1, values.length - 1);
+      const frac = pos - lo;
+      return values[lo] * (1.0 - frac) + values[hi] * frac;
+    }
+
+    function traceScrollingSeries(ctx, values, x0, x1, phase, mapY) {
+      const n = values.length;
+      if (n < 2) return;
+      const spacing = (x1 - x0) / Math.max(n - 1, 1);
+      const steps = Math.max(2, Math.ceil(x1 - x0));
+      for (let i = 0; i <= steps; i++) {
+        const x = x0 + (x1 - x0) * (i / steps);
+        const logicalPosition = (x - x0) / Math.max(spacing, EPSILON) - phase;
+        const y = mapY(sampleSeries(values, logicalPosition));
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+    }
+
     // Map normalized speed [0, 1] -> calm blue (steady) to warm coral (transition).
     function speedToColor(normSpeed, alpha = 1.0) {
       const s = Math.max(0.0, Math.min(1.0, normSpeed));
@@ -996,106 +1026,88 @@
       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
-    // Track 1: speed-colored waveform, stable match boxes, CUSUM marker.
-    function drawTrack1(telemetry, pulsePhase) {
+    // Track 1: one continuous waveform, soft match fields, no boxed overlays.
+    function drawTrack1(telemetry) {
       const env = prepareCanvas("canvasTrack1");
       if (!env) return;
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      ctx.strokeStyle = PALETTE.grid;
-      ctx.lineWidth = 1;
-      for (let gx = 0; gx <= 10; gx++) {
-        const x = (gx / 10) * w;
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
-      }
-      const midY = h * 0.54;
-      ctx.beginPath();
-      ctx.moveTo(0, midY);
-      ctx.lineTo(w, midY);
-      ctx.stroke();
-
       const T = telemetry.frameCount;
       const wave = telemetry.waveform;
       const speedNorm = telemetry.frameSpeedNorm;
+      const midY = h * 0.54;
+      const phase = studioState.isPlaying ? studioState.streamCursor : 0.0;
+      const spacing = (w - 20) / Math.max(T - 1, 1);
+      const xAt = (t) => (t - phase) * spacing + 10;
 
-      // Draw vertical colored waveform bars + continuous envelope
-      const barWidth = Math.max(2.0, (w / T) * 0.72);
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.07)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(8, midY);
+      ctx.lineTo(w - 8, midY);
+      ctx.stroke();
+
+      const area = ctx.createLinearGradient(0, midY - h * 0.34, 0, midY + h * 0.34);
+      area.addColorStop(0, "rgba(0, 113, 227, 0.12)");
+      area.addColorStop(0.52, "rgba(0, 113, 227, 0.045)");
+      area.addColorStop(1, "rgba(0, 113, 227, 0)");
+      ctx.fillStyle = area;
+      ctx.beginPath();
+      ctx.moveTo(xAt(0), midY);
       for (let t = 0; t < T; t++) {
-        const x = (t / Math.max(T - 1, 1)) * (w - 16) + 8;
-        const amp = Math.min(0.95, Math.abs(wave[t])) * (h * 0.40);
-        const col = speedToColor(speedNorm[t], 0.76);
-        ctx.fillStyle = col;
-        ctx.fillRect(x - barWidth * 0.5, midY - Math.max(2, amp), barWidth, Math.max(4, amp * 2));
+        ctx.lineTo(xAt(t), midY - wave[t] * (h * 0.36));
+      }
+      ctx.lineTo(w - 10, midY);
+      ctx.closePath();
+      ctx.fill();
 
-        // High-frequency harmonic oscillation lines inside bar
-        if (t > 0) {
-          const prevX = ((t - 1) / Math.max(T - 1, 1)) * (w - 16) + 8;
-          const prevY = midY - wave[t - 1] * (h * 0.38);
-          const currY = midY - wave[t] * (h * 0.38);
-          ctx.strokeStyle = speedToColor(speedNorm[t], 0.84);
-          ctx.lineWidth = 1.35;
-          ctx.beginPath();
-          ctx.moveTo(prevX, prevY);
-          ctx.lineTo(x, currY);
-          ctx.stroke();
-        }
+      ctx.lineWidth = 1.7;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (let t = 1; t < T; t++) {
+        ctx.strokeStyle = speedToColor(speedNorm[t], 0.86);
+        ctx.beginPath();
+        ctx.moveTo(xAt(t - 1), midY - wave[t - 1] * (h * 0.36));
+        ctx.lineTo(xAt(t), midY - wave[t] * (h * 0.36));
+        ctx.stroke();
       }
 
-      // Vertical CUSUM change-point marker.
       const cusumIdx = telemetry.streamEv.cusum.changeIndex;
-      const laserX = (cusumIdx / Math.max(T - 1, 1)) * (w - 16) + 8;
+      const cusumX = xAt(cusumIdx);
       ctx.save();
-      ctx.strokeStyle = PALETTE.coral;
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([3, 5]);
+      ctx.strokeStyle = "rgba(230, 106, 78, 0.42)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 5]);
       ctx.beginPath();
-      ctx.moveTo(laserX, 0);
-      ctx.lineTo(laserX, h);
+      ctx.moveTo(cusumX, 10);
+      ctx.lineTo(cusumX, h - 10);
       ctx.stroke();
       ctx.restore();
 
-      // Match boxes are deliberately stable. Breathing glow caused GIF flicker.
-      for (let idx = 0; idx < telemetry.activeMatches.length; idx++) {
+      for (let idx = telemetry.activeMatches.length - 1; idx >= 0; idx--) {
         const m = telemetry.activeMatches[idx];
-        const x1 = (m.start / Math.max(T - 1, 1)) * (w - 16) + 8;
-        const x2 = (Math.min(m.end, T - 1) / Math.max(T - 1, 1)) * (w - 16) + 8;
-        const boxW = Math.max(36, x2 - x1);
-
+        const x1 = xAt(m.start);
+        const x2 = xAt(Math.min(m.end, T - 1));
+        const width = Math.max(18, x2 - x1);
         const isTop = idx === 0;
-        const borderAlpha = isTop ? 0.72 : 0.34;
-        const fillAlpha = isTop ? 0.09 : 0.045;
+        const alpha = isTop ? 0.10 : 0.045;
+        const color = isTop ? "0, 113, 227" : "123, 107, 176";
+        const band = ctx.createLinearGradient(x1, 0, x1 + width, 0);
+        band.addColorStop(0, `rgba(${color}, 0)`);
+        band.addColorStop(0.18, `rgba(${color}, ${alpha})`);
+        band.addColorStop(0.82, `rgba(${color}, ${alpha})`);
+        band.addColorStop(1, `rgba(${color}, 0)`);
+        ctx.fillStyle = band;
+        ctx.fillRect(x1, 0, width, h);
+      }
 
-        ctx.save();
-        ctx.fillStyle = isTop ? `rgba(0, 113, 227, ${fillAlpha})` : `rgba(123, 107, 176, ${fillAlpha})`;
-        ctx.strokeStyle = isTop ? `rgba(0, 113, 227, ${borderAlpha})` : `rgba(123, 107, 176, ${borderAlpha})`;
-        ctx.lineWidth = isTop ? 1.4 : 1;
-        ctx.beginPath();
-        ctx.roundRect(x1, 6, boxW, h - 12, 6);
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-
-        // Floating HUD tag at top of the capture box
-        const tagText = `${m.key} | 综合:${m.score.toFixed(2)} (指纹:${m.fingerprint_score.toFixed(2)} 证据距:${m.evidence_distance.toFixed(2)})`;
-        ctx.font = "600 10px 'SFMono-Regular', Consolas, monospace";
-        const textW = ctx.measureText(tagText).width + 12;
-        const tagX = Math.max(6, Math.min(w - textW - 6, x1));
-        const tagY = idx === 0 ? 10 : h - 26;
-
-        ctx.fillStyle = isTop ? "rgba(255, 255, 255, 0.96)" : "rgba(255, 255, 255, 0.92)";
-        ctx.strokeStyle = isTop ? "rgba(0, 113, 227, 0.24)" : "rgba(123, 107, 176, 0.20)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(tagX, tagY, textW, 18, 4);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = isTop ? PALETTE.inkSoft : PALETTE.muted;
-        ctx.fillText(tagText, tagX + 6, tagY + 12.5);
+      const topMatch = telemetry.activeMatches[0];
+      if (topMatch) {
+        const label = `${topMatch.key} · ${topMatch.score.toFixed(2)}`;
+        ctx.font = `550 10px ${CANVAS_MONO}`;
+        ctx.fillStyle = "rgba(0, 88, 178, 0.78)";
+        ctx.fillText(label, Math.min(w - 170, Math.max(10, xAt(topMatch.start))), 20);
       }
     }
 
@@ -1106,15 +1118,12 @@
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      ctx.strokeStyle = PALETTE.grid;
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.055)";
       ctx.lineWidth = 1;
-      for (let gy = 1; gy <= 3; gy++) {
-        const y = (gy / 4) * h;
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-      }
+      ctx.beginPath();
+      ctx.moveTo(8, h - 12);
+      ctx.lineTo(w - 8, h - 12);
+      ctx.stroke();
 
       const speed = telemetry.decomp.speed;
       const turning = telemetry.decomp.turning;
@@ -1122,6 +1131,11 @@
       const cusumIdx = telemetry.streamEv.cusum.changeIndex;
       const peaks = telemetry.streamEv.peaks;
       const nSp = speed.length;
+      const phase = studioState.isPlaying ? studioState.streamCursor : 0.0;
+      const padX = 8;
+      const usableW = Math.max(20, w - 16);
+      const spacing = usableW / Math.max(nSp - 1, 1);
+      const xAt = (index) => padX + (index - phase) * spacing;
 
       let maxSp = EPSILON;
       for (let i = 0; i < nSp; i++) if (speed[i] > maxSp) maxSp = speed[i];
@@ -1133,18 +1147,17 @@
       // 1. Turning Angle Curve cos(theta_t) in [-1, 1] (purple dashed)
       if (turning.length > 1) {
         ctx.save();
-        ctx.strokeStyle = "rgba(123, 107, 176, 0.62)";
-        ctx.lineWidth = 1.25;
-        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = "rgba(123, 107, 176, 0.20)";
+        ctx.lineWidth = 1.0;
         ctx.beginPath();
-        for (let i = 0; i < turning.length; i++) {
-          const x = (i / Math.max(turning.length - 1, 1)) * (w - 16) + 8;
-          // Map [-1, 1] -> [h - 14, 18]
-          const normTurn = (turning[i] + 1.0) * 0.5;
-          const y = h - 14 - normTurn * (h - 32);
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
+        traceScrollingSeries(
+          ctx,
+          turning,
+          padX,
+          w - padX,
+          phase,
+          (value) => h - 14 - ((value + 1.0) * 0.5) * (h - 32)
+        );
         ctx.stroke();
         ctx.restore();
       }
@@ -1154,13 +1167,14 @@
       ctx.strokeStyle = "rgba(230, 106, 78, 0.62)";
       ctx.lineWidth = 1.25;
       ctx.beginPath();
-      for (let i = 0; i < cusumCurve.length; i++) {
-        const x = (i / Math.max(cusumCurve.length - 1, 1)) * (w - 16) + 8;
-        const normC = 0.5 + 0.45 * (cusumCurve[i] / maxCusum);
-        const y = h - 12 - normC * (h - 24);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
+      traceScrollingSeries(
+        ctx,
+        cusumCurve,
+        padX,
+        w - padX,
+        phase,
+        (value) => h - 12 - (0.5 + 0.45 * (value / maxCusum)) * (h - 24)
+      );
       ctx.stroke();
       ctx.restore();
 
@@ -1171,9 +1185,9 @@
       grad.addColorStop(1, "rgba(0, 113, 227, 0.0)");
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.moveTo(8, h - 10);
+      ctx.moveTo(xAt(0), h - 10);
       for (let i = 0; i < nSp; i++) {
-        const x = (i / Math.max(nSp - 1, 1)) * (w - 16) + 8;
+        const x = xAt(i);
         const y = h - 12 - (speed[i] / maxSp) * (h - 28);
         ctx.lineTo(x, y);
       }
@@ -1183,18 +1197,21 @@
 
       ctx.strokeStyle = PALETTE.blue;
       ctx.lineWidth = 1.8;
+      ctx.lineJoin = "round";
       ctx.beginPath();
-      for (let i = 0; i < nSp; i++) {
-        const x = (i / Math.max(nSp - 1, 1)) * (w - 16) + 8;
-        const y = h - 12 - (speed[i] / maxSp) * (h - 28);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
+      traceScrollingSeries(
+        ctx,
+        speed,
+        padX,
+        w - padX,
+        phase,
+        (value) => h - 12 - (value / maxSp) * (h - 28)
+      );
       ctx.stroke();
       ctx.restore();
 
       // 4. Vertical CUSUM change-point marker.
-      const laserX = (cusumIdx / Math.max(nSp - 1, 1)) * (w - 16) + 8;
+      const laserX = xAt(cusumIdx);
       ctx.save();
       ctx.strokeStyle = PALETTE.coral;
       ctx.lineWidth = 1.2;
@@ -1206,7 +1223,7 @@
 
       ctx.setLineDash([]);
       ctx.fillStyle = PALETTE.coral;
-      ctx.font = "600 10px 'SFMono-Regular', Consolas, monospace";
+      ctx.font = `600 10px ${CANVAS_MONO}`;
       const cpLabel = `CUSUM 变点 ${(cusumIdx / Math.max(nSp - 1, 1)).toFixed(2)}`;
       const cpX = 8;
       ctx.fillText(cpLabel, cpX, 14);
@@ -1217,7 +1234,7 @@
       const peakColors = [PALETTE.blue, PALETTE.teal];
       for (let p = 0; p < Math.min(2, peaks.length); p++) {
         const idx = peaks[p];
-        const px = (idx / Math.max(nSp - 1, 1)) * (w - 16) + 8;
+        const px = xAt(idx);
         const py = h - 12 - (speed[idx] / maxSp) * (h - 28);
         const radius = p === 0 ? 4.8 : 4.0;
 
@@ -1227,7 +1244,7 @@
         ctx.arc(px, py, radius, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.font = "650 9px 'SFMono-Regular', Consolas, monospace";
+        ctx.font = `650 9px ${CANVAS_MONO}`;
         ctx.fillStyle = p === 0 ? PALETTE.blue : PALETTE.teal;
         ctx.fillText(p === 0 ? "P1" : "P2", Math.max(6, px - 7), Math.max(11, py - 8));
         ctx.restore();
@@ -1251,7 +1268,7 @@
       const yArc = h - 26;
 
       // Labels on left
-      ctx.font = "600 10px 'SFMono-Regular', Consolas, monospace";
+      ctx.font = `600 10px ${CANVAS_MONO}`;
       ctx.fillStyle = PALETTE.faint;
       ctx.fillText("Linear", 8, yLinear + 4);
       ctx.fillStyle = PALETTE.teal;
@@ -1295,13 +1312,13 @@
         ctx.arc(ax, yArc, 4, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.font = "500 9px 'SFMono-Regular', Consolas, monospace";
+        ctx.font = `500 9px ${CANVAS_MONO}`;
         ctx.fillStyle = PALETTE.muted;
         ctx.fillText(`s${i}`, ax - 6, yArc + 16);
       }
 
       // Caption on top right
-      ctx.font = "500 10px -apple-system, 'Segoe UI', 'PingFang SC', sans-serif";
+      ctx.font = `500 10px ${CANVAS_SANS}`;
       ctx.fillStyle = PALETTE.faint;
       const rateHint = studioState.speakingRate < 0.85
         ? "当前慢速拖音，等弧长刻度自动变疏"
@@ -1311,7 +1328,7 @@
       ctx.fillText(rateHint, Math.max(padX, w - ctx.measureText(rateHint).width - 10), 14);
     }
 
-    // Track 4: 4-Partition Weighted Fingerprint Heatmap Barcode Comparison
+    // Track 4: continuous fingerprint ribbons instead of a wall of cells.
     function drawTrack4(telemetry) {
       const env = prepareCanvas("canvasTrack4");
       if (!env) return;
@@ -1325,83 +1342,74 @@
       const tVec = tmplItem.template;
       const dim = qVec.length;
 
-      const padLeft = 86;
-      const padRight = 14;
-      const barW = Math.max(40, w - padLeft - padRight);
+      const padLeft = 82;
+      const padRight = 10;
+      const barW = Math.max(60, w - padLeft - padRight);
       const cellW = barW / dim;
+      const rowH = Math.max(24, Math.min(38, (h - 100) / 3.1));
+      const y1 = 44;
+      const y2 = y1 + rowH + 20;
+      const y3 = y2 + rowH + 20;
 
-      // Colored partition strips. The labels live in the pill row below, so the
-      // narrow Speed/Accel partitions never collide inside the canvas.
+      // Thin partition accents replace header boxes.
       for (const seg of segments) {
         const sx = padLeft + seg.start * cellW;
-        const sw = (seg.end - seg.start) * cellW;
-        ctx.fillStyle = seg.color + "22";
-        ctx.strokeStyle = seg.color + "88";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(sx + 1, 6, Math.max(4, sw - 2), 18, 4);
-        ctx.fill();
-        ctx.stroke();
-        ctx.font = "600 8px 'SFMono-Regular', Consolas, monospace";
+        const sw = Math.max(3, (seg.end - seg.start) * cellW - 2);
         ctx.fillStyle = seg.color;
-        const header = { static: "STATIC", delta: "DELTA", speed: "SPEED", acceleration: "ACCEL" }[seg.name] || seg.name.toUpperCase();
-        ctx.fillText(header, sx + 5, 18.5);
+        ctx.globalAlpha = 0.72;
+        ctx.fillRect(sx, 20, sw, 2);
+      }
+      ctx.globalAlpha = 1;
 
+      function sampleValue(vec, position) {
+        const pos = Math.max(0, Math.min(dim - 1, position));
+        const lo = Math.floor(pos);
+        const hi = Math.min(lo + 1, dim - 1);
+        const frac = pos - lo;
+        return vec[lo] * (1 - frac) + vec[hi] * frac;
       }
 
-      // Row labels
-      ctx.font = "600 10px 'SFMono-Regular', Consolas, monospace";
-      ctx.fillStyle = PALETTE.inkSoft;
-      ctx.fillText("当前窗口指纹", 8, 48);
-      ctx.fillStyle = PALETTE.blue;
-      ctx.fillText("注册模板指纹", 8, 84);
-      ctx.fillStyle = PALETTE.faint;
-      ctx.fillText("逐维共振热力", 8, 118);
-
-      // Value to color helper for barcode cells
-      function valToBarcodeColor(v) {
-        const norm = Math.max(-1.0, Math.min(1.0, v * 4.5));
-        if (norm >= 0) {
-          const a = 0.25 + 0.75 * norm;
-          return `rgba(0, 113, 227, ${a.toFixed(2)})`;
-        } else {
-          const a = 0.25 + 0.75 * (-norm);
-          return `rgba(230, 106, 78, ${a.toFixed(2)})`;
+      function drawRibbon(values, y, rowHeight) {
+        const steps = Math.max(180, Math.floor(barW * 1.5));
+        const stepW = barW / steps + 0.65;
+        for (let s = 0; s < steps; s++) {
+          const ratio = s / Math.max(steps - 1, 1);
+          const value = sampleValue(values, ratio * (dim - 1));
+          const norm = Math.max(-1, Math.min(1, value * 4.4));
+          const alpha = 0.055 + 0.75 * Math.abs(norm);
+          const rgb = norm >= 0 ? "0, 113, 227" : "230, 106, 78";
+          ctx.fillStyle = `rgba(${rgb}, ${alpha.toFixed(3)})`;
+          ctx.fillRect(padLeft + ratio * barW, y, stepW, rowHeight);
         }
       }
 
-      for (let i = 0; i < dim; i++) {
-        const x = padLeft + i * cellW;
-        const cw = Math.max(1.2, cellW - 1.0);
+      drawRibbon(qVec, y1, rowH);
+      drawRibbon(tVec, y2, rowH);
 
-        // Row 1: Query Barcode
-        ctx.fillStyle = valToBarcodeColor(qVec[i]);
-        ctx.fillRect(x, 31, cw, 25);
-
-        // Row 2: Enrolled Template Barcode
-        ctx.fillStyle = valToBarcodeColor(tVec[i]);
-        ctx.fillRect(x, 67, cw, 25);
-
-        // Row 3: alignment match bar (teal = aligned, coral = mismatch)
-        const diff = Math.abs(qVec[i] - tVec[i]);
-        const matchScore = Math.max(0.0, 1.0 - diff * 3.8);
-        ctx.fillStyle = matchScore > 0.55
-          ? `rgba(43, 156, 148, ${(0.28 + 0.62 * matchScore).toFixed(2)})`
-          : `rgba(230, 106, 78, ${(0.68 - 0.38 * matchScore).toFixed(2)})`;
-        ctx.fillRect(x, 103, cw, 18);
+      const steps = Math.max(180, Math.floor(barW * 1.5));
+      const stepW = barW / steps + 0.65;
+      const matchH = Math.max(10, rowH * 0.48);
+      for (let s = 0; s < steps; s++) {
+        const ratio = s / Math.max(steps - 1, 1);
+        const q = sampleValue(qVec, ratio * (dim - 1));
+        const t = sampleValue(tVec, ratio * (dim - 1));
+        const match = Math.max(0, 1 - Math.abs(q - t) * 3.8);
+        const rgb = match > 0.55 ? "43, 156, 148" : "230, 106, 78";
+        const alpha = match > 0.55 ? 0.22 + 0.48 * match : 0.30 + 0.35 * (1 - match);
+        ctx.fillStyle = `rgba(${rgb}, ${alpha.toFixed(3)})`;
+        ctx.fillRect(padLeft + ratio * barW, y3, stepW, matchH);
       }
 
-      // Partition boundary dividers
-      for (const seg of segments) {
-        if (seg.start === 0) continue;
-        const bx = padLeft + seg.start * cellW;
-        ctx.strokeStyle = "rgba(29, 29, 31, 0.10)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(bx, 28);
-        ctx.lineTo(bx, 124);
-        ctx.stroke();
-      }
+      ctx.font = `600 9px ${CANVAS_MONO}`;
+      ctx.fillStyle = PALETTE.inkSoft;
+      ctx.fillText("当前指纹", 8, y1 + rowH * 0.62);
+      ctx.fillStyle = PALETTE.blue;
+      ctx.fillText("模板指纹", 8, y2 + rowH * 0.62);
+      ctx.fillStyle = PALETTE.faint;
+      ctx.fillText("逐维共振", 8, y3 + matchH * 0.72);
+
+      // Segment boundaries live in the slim color ticks above the ribbons.
+      // Keeping the ribbons uninterrupted makes the fingerprint read as one texture.
     }
 
     // Mode 1 Mini Preview Canvas (Normal vs Slow Dual-Tempo Trajectories)
@@ -1846,8 +1854,30 @@
       bindDrawers();
     }
 
-    // Sampled animation loop. Rendering is smooth; the stream advances on a stable cadence.
+    function initScrollStory() {
+      const targets = Array.from(new Set(document.querySelectorAll(".showcase, [data-reveal]")));
+      const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (reduceMotion || !("IntersectionObserver" in window)) {
+        targets.forEach((target) => target.classList.add("is-inview"));
+        return;
+      }
+
+      const observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          entry.target.classList.toggle("is-inview", entry.isIntersecting);
+        }
+      }, {
+        rootMargin: "-6% 0px -10% 0px",
+        threshold: 0.08
+      });
+
+      targets.forEach((target) => observer.observe(target));
+    }
+
+    // The stream advances at 20 Hz, while the canvas redraws at display rate.
+    // streamCursor supplies the fractional frame offset, so motion never snaps between samples.
     let lastFrameTime = performance.now();
+    let lastStreamFrameTime = lastFrameTime;
     let frameCounter = 0;
     let liveRng = createRng(99);
     let captureRng = createRng(99);
@@ -1876,18 +1906,29 @@
         }
 
         if (studioState.isPlaying) {
-          studioState.frameStepCounter++;
-          if (studioState.frameStepCounter % 3 === 0) {
-            if (studioState.injectionQueue.length === 0 && studioState.frameStepCounter % 105 === 0) {
-              queuePhraseUtterance(
-                studioState.activePhraseKey,
-                studioState.speakingRate,
-                studioState.speakerNuisance,
-                false
-              );
+          const elapsed = Math.min(50, Math.max(0, now - lastStreamFrameTime));
+          lastStreamFrameTime = now;
+          studioState.streamCursor += elapsed * 0.02;
+
+          let advances = Math.floor(studioState.streamCursor);
+          if (advances > 0) {
+            studioState.streamCursor -= advances;
+            while (advances > 0) {
+              studioState.frameStepCounter++;
+              if (studioState.injectionQueue.length === 0 && studioState.frameStepCounter % 105 === 0) {
+                queuePhraseUtterance(
+                  studioState.activePhraseKey,
+                  studioState.speakingRate,
+                  studioState.speakerNuisance,
+                  false
+                );
+              }
+              pushNextStreamFrame(liveRng);
+              advances--;
             }
-            pushNextStreamFrame(liveRng);
           }
+        } else {
+          lastStreamFrameTime = now;
         }
 
         renderAllUI(computeFullTelemetry());
@@ -1919,6 +1960,7 @@
           pushNextStreamFrame(captureRng);
           studioState.frameStepCounter++;
         }
+        studioState.streamCursor = 0;
         renderAllUI(computeFullTelemetry());
         return studioState.frameStepCounter;
       }
@@ -1948,11 +1990,14 @@
 
       if (CAPTURE_MODE) {
         studioState.audioMuted = true;
-        injectPhraseImmediate("吴语·侬好 (Wu)");
+        studioState.streamCursor = 0;
+        injectPhraseImmediate("吴语·侬好 (Wu)", false);
         queuePhraseUtterance("吴语·侬好 (Wu)", studioState.speakingRate, studioState.speakerNuisance, false);
         startCaptureMode();
       } else {
-        injectPhraseImmediate("吴语·侬好 (Wu)");
+        studioState.streamCursor = 0;
+        injectPhraseImmediate("吴语·侬好 (Wu)", false);
+        initScrollStory();
         startOscilloscopeLoop();
       }
     });

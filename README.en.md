@@ -28,21 +28,21 @@
 
 <p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">Open Acoustic Print Studio</a></strong></p>
 
-The animation is captured from the working page. The default view keeps one primary action, the current phrase, and the four tracks. Tempo, timber, threshold, and enrollment controls unfold on demand. The online Studio runs in the browser and supports microphone streaming, WAV drag-and-drop, a frame-shuffle control, dual-tempo enrollment, and telemetry export. The static page needs no backend and processes audio locally.
+The animation is captured from the working page. The four tracks sit on one continuous scroll, and each act fades in as the next approaches. The default view keeps one primary action, the current phrase, and the four tracks. Tempo, timbre, threshold, and enrollment controls unfold on demand. The online Studio runs in the browser and supports microphone streaming, WAV drag-and-drop, a frame-shuffle control, dual-tempo enrollment, and telemetry export. The static page needs no backend and processes audio locally.
 
 All four tracks read the same telemetry packet.
 
 | Track | What appears on screen | Implementation |
 | --- | --- | --- |
-| Track 01 | Speed-colored waveform, multi-scale capture boxes, temporal IoU suppression | `OnlineMatcher`, `decompose().speed` |
+| Track 01 | Speed-colored waveform, soft match bands, temporal IoU suppression | `OnlineMatcher`, `decompose().speed` |
 | Track 02 | Instantaneous speed, two peaks, zero-mean CUSUM change point, turning angle | `extract_evidence`, `compute_cusum_curve` |
 | Track 03 | Linear and equal-arc-length rulers, speaker-subspace stripping energy | `arc_length_resample`, `SpeakerSubspaceProjector` |
-| Track 04 | Four-part Static, Delta, Speed, and Accel fingerprint barcode | `fingerprint`, `decompose_fingerprint_barcode` |
+| Track 04 | Continuous Static, Delta, Speed, and Accel fingerprint texture | `fingerprint`, `decompose_fingerprint_barcode` |
 
 <details>
 <summary>Open the full four-track screenshot</summary>
 <p align="center">
-  <img src="docs/assets/studio-full.png" alt="Acoustic Print Studio full four-track interface" width="1100" />
+  <img src="docs/assets/studio-full.png" alt="Acoustic Print Studio full four-track scroll story" width="1100" />
 </p>
 </details>
 
@@ -223,7 +223,7 @@ studio/
   index.html        backend-free four-track Canvas oscilloscope
   static/           light interface styles and deterministic Canvas renderer
   app.py            FastAPI WebSocket and unified launcher
-  gradio_app.py     Hugging Face Spaces streaming dashboard
+  gradio_app.py     Hugging Face Spaces streaming studio
 docs/
   DATA_CONTRACT.md
   MODULE_MAP.md

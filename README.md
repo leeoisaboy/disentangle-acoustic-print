@@ -28,21 +28,21 @@
 
 <p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">进入在线 Acoustic Print Studio</a></strong></p>
 
-这段动图直接截自真实页面。界面默认保留一个主操作、当前口令和四轨结果，语速、音色、阈值与录入入口按需展开。在线版在浏览器内运行，支持麦克风流、拖入 WAV、帧置乱对照、双语速注册和遥测 JSON 导出。静态页面不需要后端，音频在本地处理。
+这段动图直接截自真实页面。四轨结果放在一条连续长卷轴里，向下滚动时下一幕淡入，当前一幕缓缓退出。界面默认保留一个主操作、当前口令和四轨结果，语速、音色、阈值与录入入口按需展开。在线版在浏览器内运行，支持麦克风流、拖入 WAV、帧置乱对照、双语速注册和遥测 JSON 导出。静态页面不需要后端，音频在本地处理。
 
 四轨把同一份遥测数据拆成四种观察方式。
 
 | 轨道 | 页面中的内容 | 对应实现 |
 | --- | --- | --- |
-| Track 01 | 速度着色波形、多尺度捕获框、temporal IoU 抑制 | `OnlineMatcher`、`decompose().speed` |
+| Track 01 | 速度着色波形、柔和匹配光带、temporal IoU 抑制 | `OnlineMatcher`、`decompose().speed` |
 | Track 02 | 瞬时速度、双峰、零均值 CUSUM 变点、轨迹折返角 | `extract_evidence`、`compute_cusum_curve` |
 | Track 03 | 线性刻度与等弧长刻度对照、音色子空间剥离能量 | `arc_length_resample`、`SpeakerSubspaceProjector` |
-| Track 04 | Static、Delta、Speed、Accel 四分区指纹条码 | `fingerprint`、`decompose_fingerprint_barcode` |
+| Track 04 | Static、Delta、Speed、Accel 连续指纹纹理 | `fingerprint`、`decompose_fingerprint_barcode` |
 
 <details>
 <summary>展开四轨全页截图</summary>
 <p align="center">
-  <img src="docs/assets/studio-full.png" alt="Acoustic Print Studio 四轨全页界面" width="1100" />
+  <img src="docs/assets/studio-full.png" alt="Acoustic Print Studio 四轨长卷轴全页界面" width="1100" />
 </p>
 </details>
 

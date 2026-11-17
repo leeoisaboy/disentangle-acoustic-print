@@ -3,9 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#f5f5f7" />
+  <meta name="theme-color" content="#fbfbfd" />
   <meta name="description" content="Acoustic Print Studio：冻结声学轨迹、剥离说话人音色、观察内容如何穿过语速变化的四轨白盒分析界面。" />
   <title>Acoustic Print Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&amp;family=Noto+Sans+SC:wght@400..700&amp;family=Roboto+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230071e3'/%3E%3Cpath d='M4 12h3l2-5 3 10 2.5-7 1.5 4H20' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="static/studio.css" />
 </head>
@@ -41,13 +44,13 @@
     </div>
   </header>
 
-  <main class="page">
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="hero__copy">
+  <main class="story">
+    <section class="hero hero--story" aria-labelledby="hero-title">
+      <div class="hero__center">
         <p class="eyebrow">White-box speech analysis</p>
-        <h1 id="hero-title">把解耦过程，<br /><span>放在同一时间轴上。</span></h1>
+        <h1 id="hero-title">把解耦过程，<br /><span>放回声音本身。</span></h1>
         <p class="hero__lede">
-          冻结声学轨迹，剥离说话人音色，观察内容如何穿过语速变化。四轨视图共享一条时间轴，每个中间量都能被检查。
+          冻结声学轨迹，剥离说话人音色，观察内容如何穿过语速变化。向下滑动，四层证据依次出现。
         </p>
         <div class="hero__actions">
           <button id="btnAutoDemoPhrase" type="button" class="btn btn--primary">
@@ -57,13 +60,11 @@
           <button id="btnOpenEnrollment" type="button" class="btn btn--secondary" aria-expanded="false" aria-controls="enrollmentPanel">录入新口令</button>
           <button id="btnOpenAdvanced" type="button" class="btn btn--quiet" aria-expanded="false" aria-controls="advancedPanel">高级参数</button>
         </div>
-      </div>
 
-      <aside class="hero__aside" aria-label="当前口令与输入">
-        <div class="phrase-panel">
-          <div class="panel-heading">
-            <span>当前口令</span>
-            <span id="enrollBankCount" class="panel-heading__meta">模板库: 4 项</span>
+        <div class="phrase-rail">
+          <div class="phrase-rail__head">
+            <span>从一个口令开始</span>
+            <span id="enrollBankCount" class="phrase-rail__meta">模板库 4 项</span>
           </div>
           <div id="phraseButtonsContainer" class="phrase-list"></div>
           <div class="hero__toolbar">
@@ -91,16 +92,21 @@
             </button>
           </div>
         </div>
-      </aside>
+
+        <div class="scroll-cue" aria-hidden="true">
+          <span>向下滚动</span>
+          <svg viewBox="0 0 20 28" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M10 3v20M4.5 17.5 10 23l5.5-5.5" /></svg>
+        </div>
+      </div>
     </section>
 
     <section id="advancedPanel" class="drawer-shell" aria-hidden="true">
       <div class="drawer-shell__inner">
-        <div class="drawer">
+        <div class="drawer drawer--plain">
           <div class="drawer__head">
             <div>
               <h2>实验参数</h2>
-              <p>改变语速、音色干扰与匹配阈值，四轨会同步响应。</p>
+              <p>改变语速、音色干扰与匹配阈值，四层证据会连续响应。</p>
             </div>
             <button id="btnCloseAdvanced" type="button" class="drawer__close" aria-label="关闭实验参数">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" /></svg>
@@ -113,31 +119,26 @@
               <input id="sliderSpeakingRate" type="range" min="0.50" max="2.00" step="0.05" value="1.25" />
               <div class="control__hint"><span>0.5x 拖长</span><span>1.0x 标准</span><span>2.0x 连读</span></div>
             </div>
-
             <div class="control">
               <div class="control__label"><span>说话人音色干扰</span><span id="nuisanceValueLabel" class="control__value">38% 偏移</span></div>
               <input id="sliderSpeakerNuisance" type="range" min="0.00" max="0.80" step="0.02" value="0.38" />
               <div class="control__hint"><span>弱</span><span>强</span></div>
             </div>
-
             <div class="control">
               <div class="control__label"><span>证据融合权重</span><span id="evWeightLabel" class="control__value">0.25</span></div>
               <input id="sliderEvidenceWeight" type="range" min="0.00" max="0.80" step="0.05" value="0.25" />
               <div class="control__hint"><span>只看指纹</span><span>更多边界证据</span></div>
             </div>
-
             <div class="control">
               <div class="control__label"><span>捕获阈值</span><span id="threshValueLabel" class="control__value">0.42</span></div>
               <input id="sliderMatchThreshold" type="range" min="0.20" max="0.85" step="0.02" value="0.42" />
               <div class="control__hint"><span>更敏感</span><span>更严格</span></div>
             </div>
-
             <div class="control">
               <div class="control__label"><span>NMS IoU 阈值</span><span id="iouValueLabel" class="control__value">0.40</span></div>
               <input id="sliderIouThreshold" type="range" min="0.15" max="0.80" step="0.05" value="0.40" />
               <div class="control__hint"><span>更多重叠框</span><span>更强去重</span></div>
             </div>
-
             <div class="control">
               <div class="control__label"><span>说话人子空间</span><span class="control__value">Rank 2</span></div>
               <button id="btnToggleProjector" type="button" class="soft-button is-on">已启用 · 正交剥离</button>
@@ -155,7 +156,7 @@
 
     <section id="enrollmentPanel" class="drawer-shell" aria-hidden="true">
       <div class="drawer-shell__inner">
-        <div class="drawer">
+        <div class="drawer drawer--plain">
           <div class="drawer__head">
             <div>
               <h2>录入新口令</h2>
@@ -177,8 +178,7 @@
                 <button id="btnEnrollFromWindow" type="button" class="soft-button">截取当前窗口</button>
               </div>
             </div>
-
-            <div class="enroll-preview">
+            <div class="enroll-preview enroll-preview--plain">
               <div class="enroll-preview__meta">
                 <span id="enrollStatusText">最近注册：正常语速 vs 慢速等弧长对齐</span>
                 <span class="legend legend--blue"><span class="legend__swatch"></span>1.0x</span>
@@ -193,110 +193,100 @@
       </div>
     </section>
 
-    <div class="section-head">
-      <div>
-        <p class="eyebrow">Signal / Evidence</p>
-        <h2>四轨同步视图</h2>
+    <section class="showcase" data-reveal aria-labelledby="track1-title">
+      <div class="showcase__head">
+        <div>
+          <p class="eyebrow">01 / Acoustic capture</p>
+          <h2 id="track1-title">先把发声，<br />放回时间轴。</h2>
+        </div>
+        <p class="showcase__lede">波形按局部变化速度着色，匹配区间以柔和的光带标出。没有阈值框，只有声音在这里发生的位置。</p>
       </div>
-      <p>从声学波形到运动学、音色投影与指纹条形码，四个视角共享同一窗口，任何一步的偏差都能沿时间轴回查。</p>
-    </div>
-
-    <section class="track-grid" aria-label="四轨分析视图">
-      <article class="track-card">
-        <div class="track-card__head">
-          <div class="track-card__title">
-            <span class="track-index">01</span>
-            <div>
-              <h3>声学波形与捕获框</h3>
-              <p class="track-card__sub">速度着色 · 多尺度 Temporal-IoU NMS</p>
-            </div>
-          </div>
-        </div>
-        <div class="canvas-wrap canvas-wrap--wave">
-          <canvas id="canvasTrack1"></canvas>
-        </div>
+      <div class="stage stage--wave"><canvas id="canvasTrack1"></canvas></div>
+      <div class="stage-foot">
+        <span class="stage-note">多尺度 Temporal-IoU NMS · 局部速度着色</span>
         <div class="legend-row">
-          <span class="legend legend--blue"><span class="legend__swatch"></span>平稳元音 / 静音</span>
-          <span class="legend legend--coral"><span class="legend__swatch"></span>爆破 / 急剧转换</span>
-          <span class="legend legend--muted"><span class="legend__swatch"></span>匹配框与 CUSUM 变点</span>
+          <span class="legend legend--blue"><span class="legend__swatch"></span>平稳</span>
+          <span class="legend legend--coral"><span class="legend__swatch"></span>转折</span>
+          <span class="legend legend--muted"><span class="legend__swatch"></span>匹配区间</span>
         </div>
-      </article>
-
-      <article class="track-card">
-        <div class="track-card__head">
-          <div class="track-card__title">
-            <span class="track-index">02</span>
-            <div>
-              <h3>隐空间运动学</h3>
-              <p class="track-card__sub">瞬时速度 · 双峰 · 变点 · 折返角</p>
-            </div>
-          </div>
-          <div id="track2MetricsBadge" class="track-metric">主峰 0.32 · 次峰 0.68 · 变点 0.45</div>
-        </div>
-        <div class="canvas-wrap canvas-wrap--curve">
-          <canvas id="canvasTrack2"></canvas>
-        </div>
-        <div class="legend-row">
-          <span class="legend legend--blue"><span class="legend__swatch"></span>速度 ‖ΔH‖₂</span>
-          <span class="legend legend--coral"><span class="legend__swatch"></span>CUSUM 变点</span>
-          <span class="legend legend--violet"><span class="legend__swatch"></span>折返角 cos(θ)</span>
-        </div>
-      </article>
-
-      <article class="track-card">
-        <div class="track-card__head">
-          <div class="track-card__title">
-            <span class="track-index">03</span>
-            <div>
-              <h3>跨语速与音色解耦</h3>
-              <p class="track-card__sub">等弧长刻度尺 · 说话人正交子空间</p>
-            </div>
-          </div>
-        </div>
-        <div class="track3-body">
-          <div class="canvas-wrap canvas-wrap--ruler">
-            <canvas id="canvasTrack3"></canvas>
-          </div>
-          <div class="speaker-gauge">
-            <div>
-              <div class="speaker-gauge__title">说话人子空间投影能量</div>
-              <div id="speakerStatusBanner" class="track-card__sub">已滤除 38.2% 音色，保留 61.8% 内容</div>
-            </div>
-            <div class="meter" aria-label="音色剥离能量计">
-              <div id="barRemovedVoice" class="meter__segment meter__segment--removed" style="width: 38%;">38%</div>
-              <div id="barRetainedContent" class="meter__segment meter__segment--retained" style="width: 62%;">62%</div>
-            </div>
-            <div class="speaker-gauge__legend">
-              <span>滤除音色 <strong id="valRemovedPct">38.2%</strong></span>
-              <span>保留内容 <strong id="valRetainedPct">61.8%</strong></span>
-            </div>
-          </div>
-        </div>
-      </article>
-
-      <article class="track-card">
-        <div class="track-card__head">
-          <div class="track-card__title">
-            <span class="track-index">04</span>
-            <div>
-              <h3>四分区声学指纹</h3>
-              <p class="track-card__sub">Static · Delta · Speed · Accel</p>
-            </div>
-          </div>
-          <div class="track-metric">
-            <label for="selectCompareTemplate" class="sr-only">对比目标模板</label>
-            <select id="selectCompareTemplate" class="inline-select"></select>
-            <span id="barcodeOverallSim" class="metric-pill">余弦 0.942</span>
-          </div>
-        </div>
-        <div class="canvas-wrap canvas-wrap--barcode">
-          <canvas id="canvasTrack4"></canvas>
-        </div>
-        <div id="barcodeSegmentPills" class="segment-row"></div>
-      </article>
+      </div>
     </section>
 
-    <section class="audit" aria-label="审计视图">
+    <section class="showcase" data-reveal aria-labelledby="track2-title">
+      <div class="showcase__head">
+        <div>
+          <p class="eyebrow">02 / Latent kinematics</p>
+          <h2 id="track2-title">节奏，<br />在曲线里显形。</h2>
+        </div>
+        <div class="showcase__side">
+          <p class="showcase__lede">瞬时速度、双峰与 CUSUM 变点共享时间轴。轨迹折返角提示一次发音内部的转折。</p>
+          <p id="track2MetricsBadge" class="showcase__metric">主峰 0.32 · 次峰 0.68 · 变点 0.45</p>
+        </div>
+      </div>
+      <div class="stage stage--curve"><canvas id="canvasTrack2"></canvas></div>
+      <div class="stage-foot">
+        <span class="stage-note">速度 ‖ΔH‖₂ · 零均值 CUSUM · 折返角</span>
+        <div class="legend-row">
+          <span class="legend legend--blue"><span class="legend__swatch"></span>速度</span>
+          <span class="legend legend--coral"><span class="legend__swatch"></span>变点</span>
+          <span class="legend legend--violet"><span class="legend__swatch"></span>折返角</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="showcase" data-reveal aria-labelledby="track3-title">
+      <div class="showcase__head">
+        <div>
+          <p class="eyebrow">03 / Tempo &amp; timbre</p>
+          <h2 id="track3-title">换一种语速，<br />内容仍在原地。</h2>
+        </div>
+        <div class="showcase__side">
+          <p class="showcase__lede">线性刻度与等弧长刻度并排出现。音色子空间被正交剥离，留下更接近发音内容的部分。</p>
+          <p id="speakerStatusBanner" class="showcase__metric">已滤除 38.2% 音色，保留 61.8% 内容</p>
+        </div>
+      </div>
+      <div class="stage-row">
+        <div class="stage stage--ruler"><canvas id="canvasTrack3"></canvas></div>
+        <div class="stripping">
+          <span class="stripping__label">说话人子空间投影能量</span>
+          <div class="meter" aria-label="音色剥离能量计">
+            <div id="barRemovedVoice" class="meter__segment meter__segment--removed" style="width: 38%;">38%</div>
+            <div id="barRetainedContent" class="meter__segment meter__segment--retained" style="width: 62%;">62%</div>
+          </div>
+          <div class="stripping__legend">
+            <span>滤除音色 <strong id="valRemovedPct">38.2%</strong></span>
+            <span>保留内容 <strong id="valRetainedPct">61.8%</strong></span>
+          </div>
+        </div>
+      </div>
+      <div class="stage-foot">
+        <span class="stage-note">等弧长重采样 · SpeakerSubspaceProjector</span>
+      </div>
+    </section>
+
+    <section class="showcase" data-reveal aria-labelledby="track4-title">
+      <div class="showcase__head">
+        <div>
+          <p class="eyebrow">04 / Acoustic fingerprint</p>
+          <h2 id="track4-title">一个词，<br />留下四层纹理。</h2>
+        </div>
+        <div class="showcase__side showcase__side--inline">
+          <p class="showcase__lede">静态质心、形态变化、速度与加速度共同组成指纹。选择另一条模板，观察热力纹理如何分离。</p>
+          <div class="compare-line">
+            <label for="selectCompareTemplate" class="sr-only">对比目标模板</label>
+            <select id="selectCompareTemplate" class="inline-select"></select>
+            <span id="barcodeOverallSim" class="showcase__metric">余弦 0.942</span>
+          </div>
+        </div>
+      </div>
+      <div class="stage stage--barcode"><canvas id="canvasTrack4"></canvas></div>
+      <div id="barcodeSegmentPills" class="segment-row"></div>
+      <div class="stage-foot">
+        <span class="stage-note">Static · Delta · Speed · Accel</span>
+      </div>
+    </section>
+
+    <section class="audit" data-reveal aria-label="审计视图">
       <details>
         <summary>审计视图 · 10 维结构化证据</summary>
         <div class="audit__body">
