@@ -24,6 +24,25 @@ from disentangle_acoustic_print.stream_engine import RollingAcousticStream
 
 STUDIO_DIR = Path(__file__).resolve().parent
 INDEX_HTML_PATH = STUDIO_DIR / "index.html"
+STATIC_DIR = STUDIO_DIR / "static"
+
+
+def inline_studio_html() -> str:
+    """Return the Studio page with local CSS and JS inlined for ``srcdoc`` iframes."""
+    html = INDEX_HTML_PATH.read_text(encoding="utf-8")
+    css_path = STATIC_DIR / "studio.css"
+    js_path = STATIC_DIR / "studio.js"
+    if css_path.exists():
+        html = html.replace(
+            '<link rel="stylesheet" href="static/studio.css" />',
+            f"<style>{css_path.read_text(encoding='utf-8')}</style>",
+        )
+    if js_path.exists():
+        html = html.replace(
+            '<script src="static/studio.js" defer></script>',
+            f"<script>{js_path.read_text(encoding='utf-8')}</script>",
+        )
+    return html
 
 
 class StudioSession:
@@ -110,6 +129,7 @@ def create_fastapi_app(session: StudioSession | None = None) -> Any:
         raise RuntimeError(
             "FastAPI is required for --mode fastapi. Install with: pip install fastapi uvicorn"
         ) from exc
+    from fastapi.staticfiles import StaticFiles
 
     studio = session or StudioSession()
     app = FastAPI(
@@ -117,6 +137,8 @@ def create_fastapi_app(session: StudioSession | None = None) -> Any:
         description="Real-time 4-Track White-Box Acoustic Oscilloscope",
         version="0.3.0",
     )
+    if STATIC_DIR.exists():
+        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:

@@ -28,7 +28,7 @@
 
 <p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">进入在线 Acoustic Print Studio</a></strong></p>
 
-这段动图来自真实页面，不是概念稿。在线版在浏览器内运行，支持麦克风流、拖入 WAV、语速与音色干扰滑杆、帧置乱对照、双语音速注册和遥测 JSON 导出。静态页面不需要后端，音频在本地处理。
+这段动图直接截自真实页面。界面默认保留一个主操作、当前口令和四轨结果，语速、音色、阈值与录入入口按需展开。在线版在浏览器内运行，支持麦克风流、拖入 WAV、帧置乱对照、双语速注册和遥测 JSON 导出。静态页面不需要后端，音频在本地处理。
 
 四轨把同一份遥测数据拆成四种观察方式。
 
@@ -224,6 +224,7 @@ disentangle_acoustic_print/
   cli.py            JSON 演示与命令行入口
 studio/
   index.html        无后端四轨 Canvas 示波器
+  static/           浅色界面样式与确定性 Canvas 渲染脚本
   app.py            FastAPI WebSocket 与统一启动入口
   gradio_app.py     Hugging Face Spaces 流式界面
 docs/

@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from .app import INDEX_HTML_PATH, StudioSession
+from .app import StudioSession, inline_studio_html
 
 
 def build_gradio_blocks(session: StudioSession | None = None) -> Any:
@@ -100,13 +100,15 @@ def build_gradio_blocks(session: StudioSession | None = None) -> Any:
         return _format_summary(pkt), pkt
 
     canvas_iframe = ""
-    if INDEX_HTML_PATH.exists():
-        escaped = INDEX_HTML_PATH.read_text(encoding="utf-8").replace('"', "&quot;")
+    try:
+        escaped = inline_studio_html().replace('"', "&quot;")
         canvas_iframe = (
             f'<iframe srcdoc="{escaped}" '
-            f'style="width:100%;height:860px;border:1px solid #1e293b;border-radius:12px;" '
+            f'style="width:100%;height:1080px;border:1px solid #e5e5ea;border-radius:20px;" '
             f'allow="microphone"></iframe>'
         )
+    except FileNotFoundError:
+        canvas_iframe = ""
 
     with gr.Blocks(title="Acoustic Print Studio - 四轨白盒声学示波器") as demo:
         gr.Markdown(

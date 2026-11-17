@@ -28,7 +28,7 @@
 
 <p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">Open Acoustic Print Studio</a></strong></p>
 
-The animation comes from the working page. The online Studio runs in the browser and supports microphone streaming, WAV drag-and-drop, tempo and speaker-nuisance controls, a frame-shuffle control, dual-tempo enrollment, and telemetry export. The static page needs no backend and processes audio locally.
+The animation is captured from the working page. The default view keeps one primary action, the current phrase, and the four tracks. Tempo, timber, threshold, and enrollment controls unfold on demand. The online Studio runs in the browser and supports microphone streaming, WAV drag-and-drop, a frame-shuffle control, dual-tempo enrollment, and telemetry export. The static page needs no backend and processes audio locally.
 
 All four tracks read the same telemetry packet.
 
@@ -221,6 +221,7 @@ disentangle_acoustic_print/
   cli.py            JSON demos and command-line entry points
 studio/
   index.html        backend-free four-track Canvas oscilloscope
+  static/           light interface styles and deterministic Canvas renderer
   app.py            FastAPI WebSocket and unified launcher
   gradio_app.py     Hugging Face Spaces streaming dashboard
 docs/

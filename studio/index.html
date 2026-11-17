@@ -1,2222 +1,320 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Acoustic Print Studio — 四轨同步白盒声学示波器</title>
-  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      color-scheme: dark;
-    }
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-      background-color: #070b14;
-      color: #e2e8f0;
-      overflow-x: hidden;
-    }
-    .mono {
-      font-family: 'JetBrains Mono', monospace;
-    }
-    .glass-panel {
-      background: rgba(15, 23, 42, 0.82);
-      border: 1px solid rgba(51, 65, 85, 0.65);
-      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.65);
-      backdrop-filter: blur(12px);
-    }
-    .track-card {
-      background: linear-gradient(180deg, rgba(15, 23, 42, 0.92) 0%, rgba(9, 14, 26, 0.96) 100%);
-      border: 1px solid rgba(56, 189, 248, 0.18);
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .track-card:hover {
-      border-color: rgba(56, 189, 248, 0.42);
-      box-shadow: 0 0 24px rgba(14, 165, 233, 0.12);
-    }
-    input[type="range"] {
-      accent-color: #38bdf8;
-    }
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #0f172a;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #334155;
-      border-radius: 3px;
-    }
-  </style>
+  <meta name="theme-color" content="#f5f5f7" />
+  <meta name="description" content="Acoustic Print Studio：冻结声学轨迹、剥离说话人音色、观察内容如何穿过语速变化的四轨白盒分析界面。" />
+  <title>Acoustic Print Studio</title>
+  <link rel="stylesheet" href="static/studio.css" />
 </head>
-<body class="min-h-screen flex flex-col selection:bg-sky-500/30 selection:text-sky-200">
-  <!-- Top Studio Header -->
-  <header class="border-b border-slate-800/80 bg-slate-950/90 sticky top-0 z-30 backdrop-blur-md">
-    <div class="max-w-[1600px] mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
-      <div class="flex items-center gap-3">
-        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-500 via-cyan-400 to-orange-500 p-[1.5px] shadow-lg shadow-sky-500/20">
-          <div class="w-full h-full bg-slate-950 rounded-[7px] flex items-center justify-center">
-            <svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12h3l2-6 4 12 3-9 2 3h4" />
-            </svg>
-          </div>
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h1 class="text-base sm:text-lg font-bold tracking-tight text-white">Acoustic Print Studio</h1>
-            <span class="px-2 py-0.5 text-[11px] font-semibold rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 mono">v3.0 White-Box Scope</span>
-          </div>
-          <p class="text-xs text-slate-400 hidden sm:block">
-            纯 NumPy 矩阵几何代数同构示波引擎 · 零神经网络解码开销 · 四轨同步实时声学指纹工作台
-          </p>
-        </div>
-      </div>
+<body>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <a class="brand" href="./" aria-label="Acoustic Print Studio 首页">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.5 12h3.2l1.9-5.4 3.3 10.8 2.4-7.2 1.7 4.2h4.5" />
+            <path d="M19.2 9.2h2.3M19.2 14.8h2.3" opacity=".45" />
+          </svg>
+        </span>
+        <span class="brand__text"><strong>Acoustic Print</strong><span>Studio</span></span>
+      </a>
 
-      <!-- Real-time Telemetry Badges & Stream Controls -->
-      <div class="flex flex-wrap items-center gap-2">
-        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-xs mono">
-          <span id="streamStatusDot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span class="text-slate-400">帧率:</span>
-          <span id="fpsReadout" class="text-emerald-400 font-semibold">60 FPS</span>
-          <span class="text-slate-600">|</span>
-          <span class="text-slate-400">单窗解耦:</span>
-          <span id="latencyReadout" class="text-sky-400 font-semibold">0.18 ms</span>
-        </div>
-
-        <button id="btnTogglePlay" type="button" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 transition">
-          <span id="playIcon">⏸</span>
-          <span id="playLabel">流式滚动中</span>
+      <div class="topbar__meta">
+        <span class="live-pill">
+          <span id="streamStatusDot" class="status-dot is-live" aria-hidden="true"></span>
+          <span id="streamStatusLabel">实时演示</span>
+        </span>
+        <span class="telemetry" aria-label="性能指标">
+          <strong id="fpsReadout">60 FPS</strong>
+          <span class="telemetry__sep">/</span>
+          <span id="latencyReadout">0.18 ms</span>
+        </span>
+        <button id="btnTogglePlay" type="button" class="compact-button" title="暂停或继续实时流">
+          <span id="playIcon" aria-hidden="true">Ⅱ</span>
+          <span id="playLabel">暂停</span>
         </button>
-
-        <button id="btnMicStream" type="button" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 transition">
-          <span>🎙️</span>
-          <span id="micLabel">开启麦克风流</span>
-        </button>
-
-        <label for="wavUploadInput" class="cursor-pointer px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 transition">
-          <span>📂</span>
-          <span>导入 .WAV / JSON</span>
-          <input id="wavUploadInput" type="file" accept=".wav,audio/wav,.json,application/json" class="hidden" />
-        </label>
-
-        <button id="btnAudioMute" type="button" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="切换发音合成监听音效">
-          <span id="muteLabel">🔊 监听开</span>
-        </button>
-
-        <button id="btnExportTelemetry" type="button" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 transition">
-          导出遥测 JSON
-        </button>
+        <button id="btnExportTelemetry" type="button" class="compact-button compact-button--hide-small">导出遥测</button>
       </div>
     </div>
   </header>
 
-  <!-- Toast Banner -->
-  <div id="studioToast" class="fixed bottom-4 right-4 z-50 hidden max-w-md px-4 py-2.5 rounded-xl bg-slate-900/95 border border-sky-500/50 text-xs text-sky-200 shadow-2xl flex items-center gap-2">
-    <span class="text-sky-400">●</span>
-    <span id="studioToastText">系统就绪</span>
-  </div>
-
-  <!-- Main Workspace Layout -->
-  <main class="flex-1 max-w-[1600px] w-full mx-auto px-3 sm:px-4 py-3 grid grid-cols-1 lg:grid-cols-12 gap-3.5">
-    <!-- Left Sidebar: Mode 1 (Enrollment) & Mode 2 (Stream & Disentanglement Controls) -->
-    <aside class="lg:col-span-3 flex flex-col gap-3">
-      <!-- Mode 2: Live Dialect / Keyword Injection & Stream Controls -->
-      <section class="glass-panel rounded-xl p-3.5 flex flex-col gap-3">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-sky-400"></span>
-            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-200">模式二 · 实时流式捕获与压力测试</h2>
-          </div>
-          <span class="text-[11px] text-sky-400 mono">OnlineMatcher</span>
-        </div>
-
-        <p class="text-[11px] text-slate-400 leading-relaxed">
-          点击下方已注册的目标词或方言，向实时环形缓冲区（<code class="text-sky-300">RollingBuffer 200帧</code>）注入跨语速/跨音色声学轨迹，观察右侧四轨示波器的同步白盒解耦：
+  <main class="page">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero__copy">
+        <p class="eyebrow">White-box speech analysis</p>
+        <h1 id="hero-title">把解耦过程，<br /><span>放在同一时间轴上。</span></h1>
+        <p class="hero__lede">
+          冻结声学轨迹，剥离说话人音色，观察内容如何穿过语速变化。四轨视图共享一条时间轴，每个中间量都能被检查。
         </p>
-
-        <!-- Enrolled Phrase Trigger Buttons -->
-        <div id="phraseButtonsContainer" class="grid grid-cols-2 gap-1.5"></div>
-
-        <div class="flex gap-1.5 pt-0.5">
-          <button id="btnAutoDemoPhrase" type="button" class="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-sky-500/25 to-cyan-500/20 hover:from-sky-500/35 hover:to-cyan-500/30 text-sky-200 border border-sky-500/40 transition">
-            ⚡ 立即触发多尺度捕获演示
+        <div class="hero__actions">
+          <button id="btnAutoDemoPhrase" type="button" class="btn btn--primary">
+            <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6.4 3.6a1 1 0 0 1 1.52-.86l8.1 5.14a1 1 0 0 1 0 1.7l-8.1 5.15a1 1 0 0 1-1.52-.85V3.6Z" /></svg>
+            <span>播放入口令</span>
           </button>
-          <button id="btnPermuteCheck" type="button" class="py-1.5 px-2.5 rounded-lg text-xs font-medium bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition" title="对当前窗口做 Frame-Shuffle 帧置乱对照实验">
-            🎲 帧置乱对照
-          </button>
+          <button id="btnOpenEnrollment" type="button" class="btn btn--secondary" aria-expanded="false" aria-controls="enrollmentPanel">录入新口令</button>
+          <button id="btnOpenAdvanced" type="button" class="btn btn--quiet" aria-expanded="false" aria-controls="advancedPanel">高级参数</button>
         </div>
+      </div>
 
-        <!-- Speaking Rate & Voice Nuisance Sliders -->
-        <div class="space-y-2.5 pt-2 border-t border-slate-800/80 text-xs">
-          <div>
-            <div class="flex justify-between mb-1">
-              <span class="text-slate-300 font-medium">发音语速倍率 (Tempo Warp)</span>
-              <span id="rateValueLabel" class="mono text-sky-400 font-semibold">1.25x (快读连音)</span>
-            </div>
-            <input id="sliderSpeakingRate" type="range" min="0.50" max="2.00" step="0.05" value="1.25" class="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
-            <div class="flex justify-between text-[10px] text-slate-500 mt-0.5">
-              <span>0.5x 故意拖长音</span>
-              <span>1.0x 标准</span>
-              <span>2.0x 极速连读</span>
-            </div>
+      <aside class="hero__aside" aria-label="当前口令与输入">
+        <div class="phrase-panel">
+          <div class="panel-heading">
+            <span>当前口令</span>
+            <span id="enrollBankCount" class="panel-heading__meta">模板库: 4 项</span>
           </div>
-
-          <div>
-            <div class="flex justify-between mb-1">
-              <span class="text-slate-300 font-medium">个人音色干扰注入 (Speaker Offset)</span>
-              <span id="nuisanceValueLabel" class="mono text-orange-400 font-semibold">38% 音色偏移</span>
-            </div>
-            <input id="sliderSpeakerNuisance" type="range" min="0.00" max="0.80" step="0.02" value="0.38" class="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
-          </div>
-
-          <div>
-            <div class="flex justify-between mb-1">
-              <span class="text-slate-300 font-medium">证据融合权重 (<code class="mono">evidence_weight</code>)</span>
-              <span id="evWeightLabel" class="mono text-cyan-400 font-semibold">0.25</span>
-            </div>
-            <input id="sliderEvidenceWeight" type="range" min="0.00" max="0.80" step="0.05" value="0.25" class="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
-          </div>
-
-          <div class="grid grid-cols-2 gap-2 pt-1">
-            <div>
-              <div class="flex justify-between mb-1">
-                <span class="text-slate-400 text-[11px]">捕获阈值</span>
-                <span id="threshValueLabel" class="mono text-slate-300 text-[11px]">0.42</span>
-              </div>
-              <input id="sliderMatchThreshold" type="range" min="0.20" max="0.85" step="0.02" value="0.42" class="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
-            </div>
-            <div>
-              <div class="flex justify-between mb-1">
-                <span class="text-slate-400 text-[11px]">NMS IoU 阈值</span>
-                <span id="iouValueLabel" class="mono text-slate-300 text-[11px]">0.40</span>
-              </div>
-              <input id="sliderIouThreshold" type="range" min="0.15" max="0.80" step="0.05" value="0.40" class="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
-            </div>
-          </div>
-
-          <!-- Speaker Subspace Projector Toggle -->
-          <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between">
-            <div>
-              <div class="text-slate-200 font-medium text-xs">SpeakerSubspaceProjector</div>
-              <div class="text-[10px] text-slate-400">WCCN 低秩说话人正交子空间剥离</div>
-            </div>
-            <button id="btnToggleProjector" type="button" class="px-2.5 py-1 rounded-md text-xs font-semibold bg-sky-500/25 text-sky-300 border border-sky-500/40 transition">
-              已启用 (Rank=2)
+          <div id="phraseButtonsContainer" class="phrase-list"></div>
+          <div class="hero__toolbar">
+            <button id="btnMicStream" type="button" class="tool-button" title="开启或关闭麦克风输入">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3" />
+                <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" />
+              </svg>
+              <span id="micLabel">开启麦克风</span>
+            </button>
+            <label for="wavUploadInput" class="tool-button" title="导入 WAV 或遥测 JSON">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" />
+                <path d="M5 15.5v2A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-2" />
+              </svg>
+              <span>导入音频</span>
+              <input id="wavUploadInput" type="file" accept=".wav,audio/wav,.json,application/json" class="sr-only" />
+            </label>
+            <button id="btnAudioMute" type="button" class="tool-button" title="切换发音合成监听音效">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 10v4h3l4 3.5v-11L8 10H5Z" />
+                <path d="M16 9.5a4 4 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10" />
+              </svg>
+              <span id="muteLabel">监听开</span>
             </button>
           </div>
         </div>
-      </section>
+      </aside>
+    </section>
 
-      <!-- Mode 1: 3-Second Dual-Tempo Real-time Voice Enrollment -->
-      <section class="glass-panel rounded-xl p-3.5 flex flex-col gap-2.5">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-orange-400"></span>
-            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-200">模式一 · 3 秒双语速声纹注册</h2>
-          </div>
-          <span class="text-[11px] text-orange-400 mono">EnrollmentBank</span>
-        </div>
-
-        <p class="text-[11px] text-slate-400 leading-relaxed">
-          输入新方言或口令名称，采集/合成<strong>正常语速 (1.0x)</strong>与<strong>慢速拖长 (0.68x)</strong>两条轨迹，经等弧长重采样对齐后增量均值合成为标准指纹模板：
-        </p>
-
-        <div class="flex gap-1.5">
-          <input id="inputEnrollKey" type="text" value="湘语·恰饭 (Hunanese)" placeholder="输入新口令或方言标签..." class="flex-1 bg-slate-900/90 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-400" />
-        </div>
-
-        <div class="grid grid-cols-2 gap-1.5">
-          <button id="btnEnrollDual" type="button" class="py-1.5 px-2.5 rounded-lg text-xs font-semibold bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 border border-orange-500/40 transition">
-            ✨ 双语速合成注册
-          </button>
-          <button id="btnEnrollFromWindow" type="button" class="py-1.5 px-2.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
-            📌 截取当前窗口注册
-          </button>
-        </div>
-
-        <!-- Mini Dual-Take Preview Canvas -->
-        <div class="bg-slate-950/90 rounded-lg p-2 border border-slate-800/80">
-          <div class="flex justify-between text-[10px] text-slate-400 mb-1 mono">
-            <span id="enrollStatusText">最近注册轨迹: 正常语速 vs 慢速等弧长对齐</span>
-            <span id="enrollBankCount" class="text-sky-400">模板库: 4 项</span>
-          </div>
-          <div class="relative h-14 w-full">
-            <canvas id="canvasEnrollPreview" class="w-full h-full block"></canvas>
-          </div>
-        </div>
-      </section>
-
-      <!-- 10-D StructuredEvidence Scalar Inspector -->
-      <section class="glass-panel rounded-xl p-3.5 flex flex-col gap-2">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-1.5">
-          <span class="text-xs font-bold uppercase tracking-wider text-slate-200">10维白盒证据标量 (StructuredEvidence)</span>
-          <span class="text-[10px] mono text-slate-400">evidence.py</span>
-        </div>
-        <div id="evidenceScalarGrid" class="grid grid-cols-2 gap-1.5 text-[11px] mono"></div>
-      </section>
-    </aside>
-
-    <!-- Right Main Area: 4-Track Synchronized Acoustic Oscilloscope -->
-    <section class="lg:col-span-9 flex flex-col gap-3">
-      <!-- Track 1: Enhanced Acoustic Waveform & Multi-Scale NMS Capture Boxes -->
-      <div class="track-card rounded-xl p-3 flex flex-col gap-1.5">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <span class="px-2 py-0.5 text-[10px] font-bold rounded bg-sky-500/20 text-sky-300 border border-sky-500/30 mono">TRACK 01</span>
-            <h3 class="text-xs sm:text-sm font-bold text-white">增强型声纹捕获波形图（动态速度着色 + 多尺度 Temporal-IoU NMS 呼吸灯高亮框）</h3>
-          </div>
-          <div class="flex items-center gap-3 text-[11px] mono">
-            <span class="flex items-center gap-1 text-sky-400">
-              <span class="w-2.5 h-2.5 rounded-sm bg-sky-400 inline-block"></span>平稳元音/静音 (低迁移速度)
-            </span>
-            <span class="flex items-center gap-1 text-orange-400">
-              <span class="w-2.5 h-2.5 rounded-sm bg-orange-500 inline-block"></span>辅音爆破/急剧转换 (高 ‖ΔH_t‖₂)
-            </span>
-          </div>
-        </div>
-        <div class="relative h-40 w-full bg-slate-950/90 rounded-lg border border-slate-800/80 overflow-hidden">
-          <canvas id="canvasTrack1" class="w-full h-full block"></canvas>
-        </div>
-      </div>
-
-      <!-- Track 2: Latent Kinematics White-Box Curves (Speed, Dual Peaks, CUSUM Laser, Turning Angle) -->
-      <div class="track-card rounded-xl p-3 flex flex-col gap-1.5">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <span class="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 mono">TRACK 02</span>
-            <h3 class="text-xs sm:text-sm font-bold text-white">隐空间运动学白盒曲线（瞬时发音速度 · 双峰锁定 · CUSUM 变点激光线 · 轨迹折返角）</h3>
-          </div>
-          <div class="flex flex-wrap items-center gap-3 text-[11px] mono">
-            <span class="text-amber-300">━ speed ‖ΔH_t‖₂</span>
-            <span class="text-rose-400">┆ CUSUM 变点分割线</span>
-            <span class="text-purple-400">┄ turning cos(θ_t)</span>
-            <span id="track2MetricsBadge" class="text-slate-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">主峰: 0.32 | 次峰: 0.68 | CUSUM变点: 0.45</span>
-          </div>
-        </div>
-        <div class="relative h-40 w-full bg-slate-950/90 rounded-lg border border-slate-800/80 overflow-hidden">
-          <canvas id="canvasTrack2" class="w-full h-full block"></canvas>
-        </div>
-      </div>
-
-      <!-- Track 3: Cross-Tempo & Cross-Voice Disentanglement Perspective (Arc-Length Ruler + Speaker Stripping Gauge) -->
-      <div class="track-card rounded-xl p-3 flex flex-col gap-2">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <span class="px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 mono">TRACK 03</span>
-            <h3 class="text-xs sm:text-sm font-bold text-white">跨语速与跨音色解耦透视图（等弧长重采样刻度尺 Arc-Length Ruler + 音色剥离能量计）</h3>
-          </div>
-          <span id="speakerStatusBanner" class="text-[11px] font-semibold text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-0.5 rounded-full mono">
-            当前已滤除 38.2% 的个人音色干扰，保留 61.8% 的纯发音内容
-          </span>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-          <!-- Arc-Length Ruler Canvas -->
-          <div class="md:col-span-8 relative h-28 bg-slate-950/90 rounded-lg border border-slate-800/80 overflow-hidden">
-            <canvas id="canvasTrack3" class="w-full h-full block"></canvas>
+    <section id="advancedPanel" class="drawer-shell" aria-hidden="true">
+      <div class="drawer-shell__inner">
+        <div class="drawer">
+          <div class="drawer__head">
+            <div>
+              <h2>实验参数</h2>
+              <p>改变语速、音色干扰与匹配阈值，四轨会同步响应。</p>
+            </div>
+            <button id="btnCloseAdvanced" type="button" class="drawer__close" aria-label="关闭实验参数">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" /></svg>
+            </button>
           </div>
 
-          <!-- Speaker Subspace Stripping Energy Gauge -->
-          <div class="md:col-span-4 h-28 bg-slate-950/90 rounded-lg border border-slate-800/80 p-3 flex flex-col justify-between">
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-slate-300 font-semibold">说话人子空间正交投影能量计</span>
-              <span class="mono text-[10px] text-slate-400">‖H - H_proj‖_F / ‖H‖_F</span>
+          <div class="control-grid">
+            <div class="control">
+              <div class="control__label"><span>发音语速</span><span id="rateValueLabel" class="control__value">1.25x · 快读连音</span></div>
+              <input id="sliderSpeakingRate" type="range" min="0.50" max="2.00" step="0.05" value="1.25" />
+              <div class="control__hint"><span>0.5x 拖长</span><span>1.0x 标准</span><span>2.0x 连读</span></div>
             </div>
 
-            <!-- Dual Progress Bar -->
-            <div class="w-full h-5 rounded-md bg-slate-900 overflow-hidden flex border border-slate-800 p-0.5 gap-0.5">
-              <div id="barRemovedVoice" class="h-full bg-gradient-to-r from-rose-500 to-orange-400 rounded-l transition-all duration-150 flex items-center justify-center text-[10px] font-bold text-slate-950 mono" style="width: 38%;">
-                38%
-              </div>
-              <div id="barRetainedContent" class="h-full bg-gradient-to-r from-emerald-500 to-sky-400 rounded-r transition-all duration-150 flex items-center justify-center text-[10px] font-bold text-slate-950 mono" style="width: 62%;">
-                62%
-              </div>
+            <div class="control">
+              <div class="control__label"><span>说话人音色干扰</span><span id="nuisanceValueLabel" class="control__value">38% 偏移</span></div>
+              <input id="sliderSpeakerNuisance" type="range" min="0.00" max="0.80" step="0.02" value="0.38" />
+              <div class="control__hint"><span>弱</span><span>强</span></div>
             </div>
 
-            <div class="flex justify-between text-[11px] mono">
-              <span class="text-orange-400">● 滤除个人音色: <strong id="valRemovedPct">38.2%</strong></span>
-              <span class="text-emerald-400">● 保留纯发音内容: <strong id="valRetainedPct">61.8%</strong></span>
+            <div class="control">
+              <div class="control__label"><span>证据融合权重</span><span id="evWeightLabel" class="control__value">0.25</span></div>
+              <input id="sliderEvidenceWeight" type="range" min="0.00" max="0.80" step="0.05" value="0.25" />
+              <div class="control__hint"><span>只看指纹</span><span>更多边界证据</span></div>
+            </div>
+
+            <div class="control">
+              <div class="control__label"><span>捕获阈值</span><span id="threshValueLabel" class="control__value">0.42</span></div>
+              <input id="sliderMatchThreshold" type="range" min="0.20" max="0.85" step="0.02" value="0.42" />
+              <div class="control__hint"><span>更敏感</span><span>更严格</span></div>
+            </div>
+
+            <div class="control">
+              <div class="control__label"><span>NMS IoU 阈值</span><span id="iouValueLabel" class="control__value">0.40</span></div>
+              <input id="sliderIouThreshold" type="range" min="0.15" max="0.80" step="0.05" value="0.40" />
+              <div class="control__hint"><span>更多重叠框</span><span>更强去重</span></div>
+            </div>
+
+            <div class="control">
+              <div class="control__label"><span>说话人子空间</span><span class="control__value">Rank 2</span></div>
+              <button id="btnToggleProjector" type="button" class="soft-button is-on">已启用 · 正交剥离</button>
+              <div class="control__hint"><span>关闭后可观察音色干扰混入</span></div>
             </div>
           </div>
-        </div>
-      </div>
 
-      <!-- Track 4: Acoustic Fingerprint 4-Partition Barcode Comparison -->
-      <div class="track-card rounded-xl p-3 flex flex-col gap-2">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
-            <span class="px-2 py-0.5 text-[10px] font-bold rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 mono">TRACK 04</span>
-            <h3 class="text-xs sm:text-sm font-bold text-white">声学指纹四分区加权热力条形码对比（0.45 Static · 0.20 Delta · 0.20 Speed · 0.15 Accel）</h3>
-          </div>
-          <div class="flex items-center gap-2 text-xs">
-            <label for="selectCompareTemplate" class="text-slate-400 text-[11px]">对比目标模板:</label>
-            <select id="selectCompareTemplate" class="bg-slate-900 border border-slate-700 text-sky-300 text-xs rounded-md px-2 py-0.5 mono focus:outline-none focus:border-sky-400"></select>
-            <span id="barcodeOverallSim" class="mono text-xs font-bold px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
-              余弦相似度: 0.942
-            </span>
+          <div class="drawer__actions">
+            <button id="btnPermuteCheck" type="button" class="soft-button">帧置乱对照</button>
+            <span class="control__hint">静态质心不变，轨迹速度与指纹分应下降。</span>
           </div>
         </div>
-
-        <div class="relative h-36 w-full bg-slate-950/90 rounded-lg border border-slate-800/80 overflow-hidden">
-          <canvas id="canvasTrack4" class="w-full h-full block"></canvas>
-        </div>
-
-        <!-- 4-Segment Similarity Breakdown Pills -->
-        <div id="barcodeSegmentPills" class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs mono"></div>
       </div>
     </section>
+
+    <section id="enrollmentPanel" class="drawer-shell" aria-hidden="true">
+      <div class="drawer-shell__inner">
+        <div class="drawer">
+          <div class="drawer__head">
+            <div>
+              <h2>录入新口令</h2>
+              <p>正常语速与慢速拖长两条轨迹，经等弧长重采样后合成模板。</p>
+            </div>
+            <button id="btnCloseEnrollment" type="button" class="drawer__close" aria-label="关闭口令录入">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" /></svg>
+            </button>
+          </div>
+
+          <div class="enroll-grid">
+            <div>
+              <div class="field">
+                <label for="inputEnrollKey">口令名称</label>
+                <input id="inputEnrollKey" class="text-input" type="text" value="湘语·恰饭 (Hunanese)" placeholder="输入新口令或方言标签" />
+              </div>
+              <div class="enroll-actions">
+                <button id="btnEnrollDual" type="button" class="btn btn--primary">双语速合成</button>
+                <button id="btnEnrollFromWindow" type="button" class="soft-button">截取当前窗口</button>
+              </div>
+            </div>
+
+            <div class="enroll-preview">
+              <div class="enroll-preview__meta">
+                <span id="enrollStatusText">最近注册：正常语速 vs 慢速等弧长对齐</span>
+                <span class="legend legend--blue"><span class="legend__swatch"></span>1.0x</span>
+                <span class="legend legend--coral"><span class="legend__swatch"></span>0.68x</span>
+              </div>
+              <div class="enroll-preview__canvas">
+                <canvas id="canvasEnrollPreview"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Signal / Evidence</p>
+        <h2>四轨同步视图</h2>
+      </div>
+      <p>从声学波形到运动学、音色投影与指纹条形码，四个视角共享同一窗口，任何一步的偏差都能沿时间轴回查。</p>
+    </div>
+
+    <section class="track-grid" aria-label="四轨分析视图">
+      <article class="track-card">
+        <div class="track-card__head">
+          <div class="track-card__title">
+            <span class="track-index">01</span>
+            <div>
+              <h3>声学波形与捕获框</h3>
+              <p class="track-card__sub">速度着色 · 多尺度 Temporal-IoU NMS</p>
+            </div>
+          </div>
+        </div>
+        <div class="canvas-wrap canvas-wrap--wave">
+          <canvas id="canvasTrack1"></canvas>
+        </div>
+        <div class="legend-row">
+          <span class="legend legend--blue"><span class="legend__swatch"></span>平稳元音 / 静音</span>
+          <span class="legend legend--coral"><span class="legend__swatch"></span>爆破 / 急剧转换</span>
+          <span class="legend legend--muted"><span class="legend__swatch"></span>匹配框与 CUSUM 变点</span>
+        </div>
+      </article>
+
+      <article class="track-card">
+        <div class="track-card__head">
+          <div class="track-card__title">
+            <span class="track-index">02</span>
+            <div>
+              <h3>隐空间运动学</h3>
+              <p class="track-card__sub">瞬时速度 · 双峰 · 变点 · 折返角</p>
+            </div>
+          </div>
+          <div id="track2MetricsBadge" class="track-metric">主峰 0.32 · 次峰 0.68 · 变点 0.45</div>
+        </div>
+        <div class="canvas-wrap canvas-wrap--curve">
+          <canvas id="canvasTrack2"></canvas>
+        </div>
+        <div class="legend-row">
+          <span class="legend legend--blue"><span class="legend__swatch"></span>速度 ‖ΔH‖₂</span>
+          <span class="legend legend--coral"><span class="legend__swatch"></span>CUSUM 变点</span>
+          <span class="legend legend--violet"><span class="legend__swatch"></span>折返角 cos(θ)</span>
+        </div>
+      </article>
+
+      <article class="track-card">
+        <div class="track-card__head">
+          <div class="track-card__title">
+            <span class="track-index">03</span>
+            <div>
+              <h3>跨语速与音色解耦</h3>
+              <p class="track-card__sub">等弧长刻度尺 · 说话人正交子空间</p>
+            </div>
+          </div>
+        </div>
+        <div class="track3-body">
+          <div class="canvas-wrap canvas-wrap--ruler">
+            <canvas id="canvasTrack3"></canvas>
+          </div>
+          <div class="speaker-gauge">
+            <div>
+              <div class="speaker-gauge__title">说话人子空间投影能量</div>
+              <div id="speakerStatusBanner" class="track-card__sub">已滤除 38.2% 音色，保留 61.8% 内容</div>
+            </div>
+            <div class="meter" aria-label="音色剥离能量计">
+              <div id="barRemovedVoice" class="meter__segment meter__segment--removed" style="width: 38%;">38%</div>
+              <div id="barRetainedContent" class="meter__segment meter__segment--retained" style="width: 62%;">62%</div>
+            </div>
+            <div class="speaker-gauge__legend">
+              <span>滤除音色 <strong id="valRemovedPct">38.2%</strong></span>
+              <span>保留内容 <strong id="valRetainedPct">61.8%</strong></span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="track-card">
+        <div class="track-card__head">
+          <div class="track-card__title">
+            <span class="track-index">04</span>
+            <div>
+              <h3>四分区声学指纹</h3>
+              <p class="track-card__sub">Static · Delta · Speed · Accel</p>
+            </div>
+          </div>
+          <div class="track-metric">
+            <label for="selectCompareTemplate" class="sr-only">对比目标模板</label>
+            <select id="selectCompareTemplate" class="inline-select"></select>
+            <span id="barcodeOverallSim" class="metric-pill">余弦 0.942</span>
+          </div>
+        </div>
+        <div class="canvas-wrap canvas-wrap--barcode">
+          <canvas id="canvasTrack4"></canvas>
+        </div>
+        <div id="barcodeSegmentPills" class="segment-row"></div>
+      </article>
+    </section>
+
+    <section class="audit" aria-label="审计视图">
+      <details>
+        <summary>审计视图 · 10 维结构化证据</summary>
+        <div class="audit__body">
+          <div id="evidenceScalarGrid" class="scalar-grid"></div>
+        </div>
+      </details>
+    </section>
+
+    <footer class="footer">
+      <span>Acoustic Print Studio · 本地 Canvas 渲染，音频不上传</span>
+      <span>NumPy 几何算子 / 白盒遥测</span>
+    </footer>
   </main>
 
-  <script>
-    // =========================================================================
-    // 1. Pure JS Isomorphic Implementation of disentangle_acoustic_print
-    //    Matches geometry.py, evidence.py, fingerprint.py, telemetry.py 1-to-1
-    // =========================================================================
-    const EPSILON = 1e-12;
-    const FINGERPRINT_WEIGHTS = [0.45, 0.20, 0.20, 0.15];
-    const SCALAR_NAMES = [
-      "response",
-      "change_position",
-      "primary_peak_position",
-      "primary_peak_strength",
-      "secondary_peak_position",
-      "secondary_peak_strength",
-      "speed_mean",
-      "speed_std",
-      "turning_mean",
-      "turning_std"
-    ];
-
-    // Deterministic seeded PRNG (Mulberry32)
-    function createRng(seed) {
-      let state = (seed >>> 0) || 17;
-      return {
-        nextFloat() {
-          state = (state + 0x6D2B79F5) >>> 0;
-          let t = Math.imul(state ^ (state >>> 15), 1 | state);
-          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-          return ((t ^ (t >>> 14)) >>> 0) / 4294967296.0;
-        },
-        nextGaussian() {
-          const u1 = Math.max(this.nextFloat(), 1e-10);
-          const u2 = this.nextFloat();
-          return Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-        }
-      };
-    }
-
-    function l2Normalize1D(vec) {
-      let sumSq = 0.0;
-      for (let i = 0; i < vec.length; i++) sumSq += vec[i] * vec[i];
-      const norm = Math.max(Math.sqrt(sumSq), EPSILON);
-      const out = new Float64Array(vec.length);
-      for (let i = 0; i < vec.length; i++) out[i] = vec[i] / norm;
-      return out;
-    }
-
-    function cosine1D(a, b) {
-      const n = Math.min(a.length, b.length);
-      let dot = 0.0, na = 0.0, nb = 0.0;
-      for (let i = 0; i < n; i++) {
-        dot += a[i] * b[i];
-        na += a[i] * a[i];
-        nb += b[i] * b[i];
-      }
-      return dot / Math.max(Math.sqrt(na * nb), EPSILON);
-    }
-
-    function linearResample1D(values, outputLength) {
-      const n = values.length;
-      if (n === 0) return new Float64Array(outputLength);
-      if (n === outputLength) return Float64Array.from(values);
-      const out = new Float64Array(outputLength);
-      for (let i = 0; i < outputLength; i++) {
-        const pos = (i * (n - 1)) / Math.max(outputLength - 1, 1);
-        const lo = Math.floor(pos);
-        const hi = Math.min(lo + 1, n - 1);
-        const w = pos - lo;
-        out[i] = values[lo] * (1.0 - w) + values[hi] * w;
-      }
-      return out;
-    }
-
-    function linearResample2D(frames, outputLength) {
-      const T = frames.length;
-      const D = frames[0].length;
-      if (T === outputLength) return frames.map(row => Float64Array.from(row));
-      const out = [];
-      for (let i = 0; i < outputLength; i++) {
-        const pos = (i * (T - 1)) / Math.max(outputLength - 1, 1);
-        const lo = Math.floor(pos);
-        const hi = Math.min(lo + 1, T - 1);
-        const w = pos - lo;
-        const row = new Float64Array(D);
-        for (let d = 0; d < D; d++) {
-          row[d] = frames[lo][d] * (1.0 - w) + frames[hi][d] * w;
-        }
-        out.push(row);
-      }
-      return out;
-    }
-
-    function computeArcLengthPositions(frames, outputLength) {
-      const T = frames.length;
-      const D = frames[0].length;
-      const cumulative = new Float64Array(T);
-      cumulative[0] = 0.0;
-      for (let t = 0; t < T - 1; t++) {
-        let stepSq = 0.0;
-        for (let d = 0; d < D; d++) {
-          const diff = frames[t + 1][d] - frames[t][d];
-          stepSq += diff * diff;
-        }
-        cumulative[t + 1] = cumulative[t] + Math.sqrt(stepSq);
-      }
-      const total = cumulative[T - 1];
-      const linearPositions = new Float64Array(outputLength);
-      const arcPositions = new Float64Array(outputLength);
-      for (let i = 0; i < outputLength; i++) {
-        linearPositions[i] = (i * (T - 1)) / Math.max(outputLength - 1, 1);
-      }
-      if (total <= EPSILON) {
-        arcPositions.set(linearPositions);
-      } else {
-        for (let i = 0; i < outputLength; i++) {
-          const target = (i * total) / Math.max(outputLength - 1, 1);
-          // Binary/linear search in cumulative
-          let idx = 0;
-          while (idx < T - 2 && cumulative[idx + 1] < target) idx++;
-          const span = Math.max(cumulative[idx + 1] - cumulative[idx], EPSILON);
-          const ratio = Math.max(0.0, Math.min(1.0, (target - cumulative[idx]) / span));
-          arcPositions[i] = idx + ratio;
-        }
-      }
-      return { linearPositions, arcPositions, cumulative, total };
-    }
-
-    function arcLengthResample2D(frames, outputLength) {
-      const T = frames.length;
-      const D = frames[0].length;
-      const { arcPositions } = computeArcLengthPositions(frames, outputLength);
-      const out = [];
-      for (let i = 0; i < outputLength; i++) {
-        const pos = arcPositions[i];
-        const lo = Math.floor(pos);
-        const hi = Math.min(lo + 1, T - 1);
-        const w = pos - lo;
-        const row = new Float64Array(D);
-        for (let d = 0; d < D; d++) {
-          row[d] = frames[lo][d] * (1.0 - w) + frames[hi][d] * w;
-        }
-        out.push(row);
-      }
-      return out;
-    }
-
-    // geometry.decompose(frames)
-    function decompose(frames) {
-      const T = frames.length;
-      const D = frames[0].length;
-      const centroid = new Float64Array(D);
-      for (let t = 0; t < T; t++) {
-        for (let d = 0; d < D; d++) centroid[d] += frames[t][d];
-      }
-      for (let d = 0; d < D; d++) centroid[d] /= T;
-
-      const delta = [];
-      const speed = new Float64Array(T - 1);
-      const unitDelta = [];
-      for (let t = 0; t < T - 1; t++) {
-        const dRow = new Float64Array(D);
-        let sq = 0.0;
-        for (let d = 0; d < D; d++) {
-          const v = frames[t + 1][d] - frames[t][d];
-          dRow[d] = v;
-          sq += v * v;
-        }
-        const sp = Math.sqrt(sq);
-        speed[t] = sp;
-        delta.push(dRow);
-        const uRow = new Float64Array(D);
-        const denom = Math.max(sp, EPSILON);
-        for (let d = 0; d < D; d++) uRow[d] = dRow[d] / denom;
-        unitDelta.push(uRow);
-      }
-
-      const accelLen = Math.max(T - 2, 1);
-      const acceleration = new Float64Array(accelLen);
-      const turning = new Float64Array(accelLen);
-      for (let t = 0; t < T - 2; t++) {
-        let sq = 0.0;
-        let dot = 0.0;
-        for (let d = 0; d < D; d++) {
-          const a = delta[t + 1][d] - delta[t][d];
-          sq += a * a;
-          dot += unitDelta[t][d] * unitDelta[t + 1][d];
-        }
-        acceleration[t] = Math.sqrt(sq);
-        turning[t] = Math.max(-1.0, Math.min(1.0, dot));
-      }
-
-      return { centroid, delta, speed, acceleration, turning };
-    }
-
-    // evidence.select_peak_indices(values, count=2, min_distance=2)
-    function selectPeakIndices(values, count = 2, minDistance = 2) {
-      const n = values.length;
-      if (n === 0) return [];
-      const minDist = Math.max(1, Math.floor(minDistance));
-      const candidates = [];
-      if (n === 1) {
-        candidates.push(0);
-      } else {
-        if (values[0] >= values[1]) candidates.push(0);
-        for (let i = 1; i < n - 1; i++) {
-          if (values[i] >= values[i - 1] && values[i] > values[i + 1]) {
-            candidates.push(i);
-          }
-        }
-        if (values[n - 1] >= values[n - 2]) candidates.push(n - 1);
-      }
-      if (candidates.length === 0) {
-        let bestIdx = 0;
-        for (let i = 1; i < n; i++) if (values[i] > values[bestIdx]) bestIdx = i;
-        candidates.push(bestIdx);
-      }
-      candidates.sort((a, b) => (values[b] - values[a]) || (a - b));
-      const selected = [];
-      for (const idx of candidates) {
-        if (selected.every(prev => Math.abs(idx - prev) >= minDist)) {
-          selected.push(idx);
-        }
-        if (selected.length === count) break;
-      }
-      return selected;
-    }
-
-    // evidence._change_position(speed) & CUSUM curve
-    function computeCusum(speed) {
-      const n = speed.length;
-      if (n < 2) {
-        return { curve: new Float64Array([0]), changeIndex: 0, changePosition: 0.0 };
-      }
-      let mean = 0.0;
-      for (let i = 0; i < n; i++) mean += speed[i];
-      mean /= n;
-      const curve = new Float64Array(n);
-      let running = 0.0;
-      let bestIdx = 0;
-      let bestAbs = -1.0;
-      for (let i = 0; i < n; i++) {
-        running += speed[i] - mean;
-        curve[i] = running;
-        if (Math.abs(running) > bestAbs) {
-          bestAbs = Math.abs(running);
-          bestIdx = i;
-        }
-      }
-      return {
-        curve,
-        changeIndex: bestIdx,
-        changePosition: bestIdx / Math.max(n - 1, 1)
-      };
-    }
-
-    function meanStd(arr) {
-      if (!arr || arr.length === 0) return { mean: 0.0, std: 0.0 };
-      let m = 0.0;
-      for (let i = 0; i < arr.length; i++) m += arr[i];
-      m /= arr.length;
-      let v = 0.0;
-      for (let i = 0; i < arr.length; i++) {
-        const d = arr[i] - m;
-        v += d * d;
-      }
-      return { mean: m, std: Math.sqrt(v / arr.length) };
-    }
-
-    // evidence.extract_evidence(frames, boundaryLength=8)
-    function extractEvidence(frames, boundaryLength = 8) {
-      const decomp = decompose(frames);
-      const speed = decomp.speed;
-      const turning = decomp.turning;
-      let maxSpeed = EPSILON;
-      for (let i = 0; i < speed.length; i++) if (speed[i] > maxSpeed) maxSpeed = speed[i];
-      const minDist = Math.max(2, Math.floor(0.15 * speed.length));
-      const peaks = selectPeakIndices(speed, 2, minDist);
-      const denom = Math.max(speed.length - 1, 1);
-      const p0Pos = peaks.length > 0 ? peaks[0] / denom : 0.0;
-      const p0Str = peaks.length > 0 ? speed[peaks[0]] / maxSpeed : 0.0;
-      const p1Pos = peaks.length > 1 ? peaks[1] / denom : 0.0;
-      const p1Str = peaks.length > 1 ? speed[peaks[1]] / maxSpeed : 0.0;
-      const cusum = computeCusum(speed);
-      const spStats = meanStd(speed);
-      const turnStats = meanStd(turning);
-      const boundary = l2Normalize1D(linearResample1D(speed, boundaryLength));
-
-      const scalars = {
-        response: spStats.mean,
-        change_position: cusum.changePosition,
-        primary_peak_position: p0Pos,
-        primary_peak_strength: p0Str,
-        secondary_peak_position: p1Pos,
-        secondary_peak_strength: p1Str,
-        speed_mean: spStats.mean,
-        speed_std: spStats.std,
-        turning_mean: turnStats.mean,
-        turning_std: turnStats.std,
-        boundary
-      };
-      return { scalars, peaks, cusum, decomp };
-    }
-
-    function buildEvidenceVector(evScalars, boundaryWeight = 0.35) {
-      const boundary = evScalars.boundary;
-      const vec = new Float64Array(SCALAR_NAMES.length + boundary.length);
-      for (let i = 0; i < SCALAR_NAMES.length; i++) {
-        vec[i] = evScalars[SCALAR_NAMES[i]];
-      }
-      for (let i = 0; i < boundary.length; i++) {
-        vec[SCALAR_NAMES.length + i] = boundary[i] * boundaryWeight;
-      }
-      return vec;
-    }
-
-    // fingerprint.fingerprint(frames, outputLength=8, resample="arc")
-    function computeFingerprintWithSegments(frames, outputLength = 8) {
-      const decomp = decompose(frames);
-      const staticPart = l2Normalize1D(decomp.centroid);
-      const sampled = arcLengthResample2D(frames, outputLength + 1);
-      const D = frames[0].length;
-      const deltaFlat = new Float64Array(outputLength * D);
-      for (let t = 0; t < outputLength; t++) {
-        for (let d = 0; d < D; d++) {
-          deltaFlat[t * D + d] = sampled[t + 1][d] - sampled[t][d];
-        }
-      }
-      const deltaPart = l2Normalize1D(deltaFlat);
-      const speedPart = l2Normalize1D(linearResample1D(decomp.speed, outputLength));
-      const accelLen = Math.max(outputLength - 1, 2);
-      const accelPart = l2Normalize1D(linearResample1D(decomp.acceleration, accelLen));
-
-      const w0 = Math.sqrt(FINGERPRINT_WEIGHTS[0]);
-      const w1 = Math.sqrt(FINGERPRINT_WEIGHTS[1]);
-      const w2 = Math.sqrt(FINGERPRINT_WEIGHTS[2]);
-      const w3 = Math.sqrt(FINGERPRINT_WEIGHTS[3]);
-
-      const totalLen = staticPart.length + deltaPart.length + speedPart.length + accelPart.length;
-      const combined = new Float64Array(totalLen);
-      let offset = 0;
-      const s0 = offset;
-      for (let i = 0; i < staticPart.length; i++) combined[offset++] = w0 * staticPart[i];
-      const s1 = offset;
-      for (let i = 0; i < deltaPart.length; i++) combined[offset++] = w1 * deltaPart[i];
-      const s2 = offset;
-      for (let i = 0; i < speedPart.length; i++) combined[offset++] = w2 * speedPart[i];
-      const s3 = offset;
-      for (let i = 0; i < accelPart.length; i++) combined[offset++] = w3 * accelPart[i];
-      const s4 = offset;
-
-      const vector = l2Normalize1D(combined);
-      const segments = [
-        { name: "static", label: "0.45×Static 静态质心", weight: 0.45, start: s0, end: s1, color: "#38bdf8" },
-        { name: "delta", label: "0.20×Delta 形态变化", weight: 0.20, start: s1, end: s2, color: "#22d3ee" },
-        { name: "speed", label: "0.20×Speed 速度分布", weight: 0.20, start: s2, end: s3, color: "#f59e0b" },
-        { name: "acceleration", label: "0.15×Accel 加速度", weight: 0.15, start: s3, end: s4, color: "#a855f7" }
-      ];
-      return { vector, segments };
-    }
-
-    function temporalIoU(lStart, lEnd, rStart, rEnd) {
-      const overlap = Math.max(0, Math.min(lEnd, rEnd) - Math.max(lStart, rStart));
-      const union = Math.max(lEnd, rEnd) - Math.min(lStart, rStart);
-      return union > 0 ? overlap / union : 0.0;
-    }
-
-    // =========================================================================
-    // 2. Studio State & Rolling Acoustic Stream Engine
-    // =========================================================================
-    const STUDIO_CONFIG = {
-      maxFrames: 120,
-      dimension: 12,
-      outputLength: 8,
-      baseWindowLength: 16,
-      scales: [0.75, 1.0, 1.25],
-      hop: 2
-    };
-
-    const studioState = {
-      isPlaying: true,
-      micActive: false,
-      audioMuted: false,
-      projectorEnabled: true,
-      speakingRate: 1.25,
-      speakerNuisance: 0.38,
-      evidenceWeight: 0.25,
-      matchThreshold: 0.42,
-      iouThreshold: 0.40,
-      selectedTemplateKey: "吴语·侬好 (Wu)",
-      activePhraseKey: "吴语·侬好 (Wu)",
-      frameStepCounter: 0,
-      lastComputeMs: 0.18,
-      fps: 60,
-      // Rolling buffers
-      rawFrames: [],
-      waveform: new Float64Array(STUDIO_CONFIG.maxFrames),
-      // Speaker subspace basis (2 orthogonal nuisance axes in R^D)
-      speakerMean: new Float64Array(STUDIO_CONFIG.dimension),
-      speakerBasis: [],
-      // Enrollment bank templates
-      templates: new Map(),
-      // Pending queue of frames to scroll smoothly into the rolling buffer
-      injectionQueue: [],
-      // Last dual-tempo enrollment trajectories for Mode 1 preview
-      lastEnrollNormal: [],
-      lastEnrollSlow: [],
-      lastTelemetry: null
-    };
-
-    // Initialize orthogonal speaker subspace basis and 4 dialect templates
-    function initStudioPresets() {
-      const D = STUDIO_CONFIG.dimension;
-      const rng = createRng(17);
-
-      // Build 2 orthonormal speaker nuisance basis vectors
-      const b0 = new Float64Array(D);
-      const b1 = new Float64Array(D);
-      for (let d = 0; d < D; d++) {
-        b0[d] = rng.nextGaussian();
-        b1[d] = rng.nextGaussian();
-      }
-      const u0 = l2Normalize1D(b0);
-      let dot = 0.0;
-      for (let d = 0; d < D; d++) dot += b1[d] * u0[d];
-      for (let d = 0; d < D; d++) b1[d] -= dot * u0[d];
-      const u1 = l2Normalize1D(b1);
-      studioState.speakerBasis = [u0, u1];
-
-      // Initialize rolling background buffer
-      studioState.rawFrames = [];
-      for (let t = 0; t < STUDIO_CONFIG.maxFrames; t++) {
-        const row = new Float64Array(D);
-        for (let d = 0; d < D; d++) row[d] = 0.015 * rng.nextGaussian();
-        studioState.rawFrames.push(row);
-        studioState.waveform[t] = 0.015 * rng.nextGaussian();
-      }
-
-      const defaultPhrases = [
-        { key: "吴语·侬好 (Wu)", seed: 101, f1: 1.0, f2: 2.2, burstPos: 0.26 },
-        { key: "粤语·唔该 (Cantonese)", seed: 203, f1: 1.5, f2: 0.9, burstPos: 0.64 },
-        { key: "川渝·巴适 (Sichuan)", seed: 307, f1: 2.1, f2: 1.4, burstPos: 0.38 },
-        { key: "闽南·多谢 (Hokkien)", seed: 409, f1: 0.8, f2: 2.6, burstPos: 0.52 }
-      ];
-
-      studioState.templates.clear();
-      for (const item of defaultPhrases) {
-        const normSeq = generatePhraseTrajectory(item.key, 16, 1.0, 0.0, item.seed).frames;
-        const slowSeq = generatePhraseTrajectory(item.key, 16, 0.72, 0.0, item.seed + 5).frames;
-        enrollSequences(item.key, [normSeq, slowSeq]);
-      }
-
-      // Store preview for Mode 1
-      studioState.lastEnrollNormal = generatePhraseTrajectory("吴语·侬好 (Wu)", 18, 1.0, 0.0, 101).frames;
-      studioState.lastEnrollSlow = generatePhraseTrajectory("吴语·侬好 (Wu)", 24, 0.68, 0.0, 109).frames;
-    }
-
-    // Generate a structured multi-syllable trajectory + realistic waveform
-    function generatePhraseTrajectory(key, baseLen = 16, speakingRate = 1.0, nuisanceStrength = 0.35, seed = 17) {
-      const D = STUDIO_CONFIG.dimension;
-      let hash = 0;
-      for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-      const rng = createRng(seed + (hash % 9973));
-      const dirRng = createRng(13 + (hash % 1009));
-
-      // Create two distinct phonetic place vectors (consonant onset + vowel nucleus)
-      const rawA = new Float64Array(D);
-      const rawB = new Float64Array(D);
-      for (let d = 0; d < D; d++) {
-        rawA[d] = dirRng.nextGaussian();
-        rawB[d] = dirRng.nextGaussian();
-      }
-      // Make phrase directions orthogonal to speaker nuisance subspace so content is preserved!
-      const [u0, u1] = studioState.speakerBasis;
-      for (const vec of [rawA, rawB]) {
-        let d0 = 0.0, d1 = 0.0;
-        for (let d = 0; d < D; d++) {
-          d0 += vec[d] * u0[d];
-          d1 += vec[d] * u1[d];
-        }
-        for (let d = 0; d < D; d++) {
-          vec[d] -= d0 * u0[d] + d1 * u1[d];
-        }
-      }
-      const vecA = l2Normalize1D(rawA);
-      const vecB = l2Normalize1D(rawB);
-
-      const actualLen = Math.max(8, Math.min(34, Math.round(baseLen / Math.max(speakingRate, 0.45))));
-      const frames = [];
-      const wave = new Float64Array(actualLen);
-
-      const peak1 = 0.25 + 0.15 * ((hash % 7) / 6.0);
-      const peak2 = 0.68 + 0.12 * (((hash >>> 3) % 7) / 6.0);
-
-      for (let t = 0; t < actualLen; t++) {
-        let tau = t / Math.max(actualLen - 1, 1);
-        // Nonlinear time warp when speakingRate != 1.0
-        if (Math.abs(speakingRate - 1.0) > 0.04) {
-          const exponent = Math.max(0.45, Math.min(1.85, speakingRate));
-          tau = Math.pow(tau, exponent);
-        }
-
-        const g1 = Math.exp(-0.5 * Math.pow((tau - peak1) / 0.14, 2));
-        const g2 = 0.85 * Math.exp(-0.5 * Math.pow((tau - peak2) / 0.16, 2));
-        const burst = Math.exp(-0.5 * Math.pow((tau - (peak1 - 0.07)) / 0.04, 2));
-
-        const row = new Float64Array(D);
-        for (let d = 0; d < D; d++) {
-          const contentVal = (1.65 * g1 + 0.45 * burst) * vecA[d] + (1.45 * g2) * vecB[d];
-          const speakerVal = nuisanceStrength * 1.9 * (u0[d] * Math.cos(hash) + u1[d] * Math.sin(hash));
-          row[d] = contentVal + speakerVal + 0.02 * rng.nextGaussian();
-        }
-        frames.push(row);
-
-        // Coupled oscillating acoustic waveform amplitude
-        const carrier = Math.sin(2.0 * Math.PI * (3.0 + (hash % 4)) * tau) + 0.45 * Math.cos(2.0 * Math.PI * 7.0 * tau);
-        wave[t] = Math.max(-0.98, Math.min(0.98, (0.55 * g1 + 0.5 * g2 + 0.65 * burst) * carrier));
-      }
-
-      return { frames, wave };
-    }
-
-    function projectSpeakerSubspace(frames) {
-      const T = frames.length;
-      const D = frames[0].length;
-      if (!studioState.projectorEnabled || studioState.speakerBasis.length === 0) {
-        return {
-          projected: frames.map(r => Float64Array.from(r)),
-          removedRatio: 0.0,
-          retainedRatio: 1.0
-        };
-      }
-      const [u0, u1] = studioState.speakerBasis;
-      const projected = [];
-      let diffNormSq = 0.0;
-      let totalNormSq = 0.0;
-
-      for (let t = 0; t < T; t++) {
-        const row = frames[t];
-        let c0 = 0.0, c1 = 0.0;
-        for (let d = 0; d < D; d++) {
-          c0 += row[d] * u0[d];
-          c1 += row[d] * u1[d];
-          totalNormSq += row[d] * row[d];
-        }
-        const cleanRow = new Float64Array(D);
-        for (let d = 0; d < D; d++) {
-          const rem = c0 * u0[d] + c1 * u1[d];
-          cleanRow[d] = row[d] - rem;
-          diffNormSq += rem * rem;
-        }
-        projected.push(cleanRow);
-      }
-      const removedRatio = Math.max(0.0, Math.min(1.0, Math.sqrt(diffNormSq) / Math.max(Math.sqrt(totalNormSq), EPSILON)));
-      return {
-        projected,
-        removedRatio,
-        retainedRatio: 1.0 - removedRatio
-      };
-    }
-
-    function enrollSequences(key, sequences) {
-      const cleanSeqs = sequences.map(seq => projectSpeakerSubspace(seq).projected);
-      const fpVectors = cleanSeqs.map(seq => computeFingerprintWithSegments(seq, STUDIO_CONFIG.outputLength).vector);
-      const evVectors = cleanSeqs.map(seq => buildEvidenceVector(extractEvidence(seq).scalars, 0.35));
-
-      const fpLen = fpVectors[0].length;
-      const evLen = evVectors[0].length;
-      const batchFpMean = new Float64Array(fpLen);
-      const batchEvMean = new Float64Array(evLen);
-
-      for (const v of fpVectors) for (let i = 0; i < fpLen; i++) batchFpMean[i] += v[i] / fpVectors.length;
-      for (const e of evVectors) for (let i = 0; i < evLen; i++) batchEvMean[i] += e[i] / evVectors.length;
-
-      if (studioState.templates.has(key)) {
-        const prev = studioState.templates.get(key);
-        const total = prev.count + cleanSeqs.length;
-        const newFpMean = new Float64Array(fpLen);
-        const newEvMean = new Float64Array(evLen);
-        for (let i = 0; i < fpLen; i++) {
-          newFpMean[i] = (prev.fpMean[i] * prev.count + batchFpMean[i] * cleanSeqs.length) / total;
-        }
-        for (let i = 0; i < evLen; i++) {
-          newEvMean[i] = (prev.evMean[i] * prev.count + batchEvMean[i] * cleanSeqs.length) / total;
-        }
-        studioState.templates.set(key, {
-          key,
-          count: total,
-          fpMean: newFpMean,
-          template: l2Normalize1D(newFpMean),
-          evMean: newEvMean
-        });
-      } else {
-        studioState.templates.set(key, {
-          key,
-          count: cleanSeqs.length,
-          fpMean: batchFpMean,
-          template: l2Normalize1D(batchFpMean),
-          evMean: batchEvMean
-        });
-      }
-    }
-
-    function searchBank(windowFrames) {
-      const { vector: qFp } = computeFingerprintWithSegments(windowFrames, STUDIO_CONFIG.outputLength);
-      const qEv = buildEvidenceVector(extractEvidence(windowFrames).scalars, 0.35);
-      const weight = studioState.evidenceWeight;
-
-      let bestMatch = null;
-      for (const [key, item] of studioState.templates.entries()) {
-        let fpScore = 0.0;
-        for (let i = 0; i < qFp.length; i++) fpScore += item.template[i] * qFp[i];
-
-        let evDist = 0.0;
-        for (let i = 0; i < qEv.length; i++) {
-          const diff = (qEv[i] - item.evMean[i]) / (i < 10 ? 0.45 : 0.25);
-          evDist += diff * diff;
-        }
-        const normEvDist = Math.min(Math.sqrt(evDist) / 4.2, 1.0);
-        const score = (1.0 - weight) * fpScore - weight * normEvDist;
-
-        if (!bestMatch || score > bestMatch.score) {
-          bestMatch = {
-            key,
-            score,
-            fingerprint_score: fpScore,
-            evidence_distance: normEvDist
-          };
-        }
-      }
-      return bestMatch;
-    }
-
-    // Multi-scale sliding window + Temporal IoU NMS
-    function runOnlineMatcher(projectedStream) {
-      const T = projectedStream.length;
-      const winLengths = Array.from(
-        new Set(STUDIO_CONFIG.scales.map(s => Math.max(6, Math.round(STUDIO_CONFIG.baseWindowLength * s))))
-      ).sort((a, b) => a - b);
-
-      const candidates = [];
-      for (const wLen of winLengths) {
-        if (T < wLen) continue;
-        for (let start = 0; start <= T - wLen; start += STUDIO_CONFIG.hop) {
-          const slice = projectedStream.slice(start, start + wLen);
-          // Skip near-silent background windows
-          let energy = 0.0;
-          for (let i = 0; i < slice.length - 1; i++) {
-            for (let d = 0; d < slice[0].length; d++) {
-              const df = slice[i + 1][d] - slice[i][d];
-              energy += df * df;
-            }
-          }
-          if (Math.sqrt(energy / slice.length) < 0.09) continue;
-
-          const res = searchBank(slice);
-          if (res && res.score >= studioState.matchThreshold) {
-            candidates.push({
-              ...res,
-              start,
-              end: start + wLen
-            });
-          }
-        }
-      }
-
-      candidates.sort((a, b) => (b.score - a.score) || (a.start - b.start));
-      const kept = [];
-      for (const cand of candidates) {
-        if (kept.every(k => temporalIoU(cand.start, cand.end, k.start, k.end) <= studioState.iouThreshold)) {
-          kept.push(cand);
-        }
-        if (kept.length >= 3) break;
-      }
-      return kept;
-    }
-
-    // Build full white-box telemetry snapshot for the 4 tracks
-    function computeFullTelemetry() {
-      const t0 = performance.now();
-      const raw = studioState.rawFrames;
-      const T = raw.length;
-      const projInfo = projectSpeakerSubspace(raw);
-      const working = projInfo.projected;
-
-      const decomp = decompose(working);
-      const speed = decomp.speed;
-      const frameSpeed = new Float64Array(T);
-      frameSpeed[0] = speed[0] || 0.0;
-      let sMin = Infinity, sMax = -Infinity;
-      for (let t = 0; t < T; t++) {
-        const val = t === 0 ? speed[0] : speed[t - 1];
-        frameSpeed[t] = val;
-        if (val < sMin) sMin = val;
-        if (val > sMax) sMax = val;
-      }
-      const sSpan = Math.max(sMax - sMin, EPSILON);
-      const frameSpeedNorm = new Float64Array(T);
-      for (let t = 0; t < T; t++) {
-        frameSpeedNorm[t] = (frameSpeed[t] - sMin) / sSpan;
-      }
-
-      const activeMatches = runOnlineMatcher(working);
-
-      // Focus window for Track 3 arc-length ruler & Track 4 barcode: top match or middle window
-      let focusStart = Math.floor(T * 0.35);
-      let focusEnd = Math.min(T, focusStart + 24);
-      if (activeMatches.length > 0) {
-        focusStart = activeMatches[0].start;
-        focusEnd = activeMatches[0].end;
-      }
-      const focusSlice = working.slice(focusStart, focusEnd);
-
-      const streamEv = extractEvidence(working);
-      const focusEv = extractEvidence(focusSlice.length >= 4 ? focusSlice : working);
-      const arcRuler = computeArcLengthPositions(focusSlice.length >= 4 ? focusSlice : working, STUDIO_CONFIG.outputLength + 1);
-      const barcode = computeFingerprintWithSegments(focusSlice.length >= 4 ? focusSlice : working, STUDIO_CONFIG.outputLength);
-
-      const elapsed = performance.now() - t0;
-      studioState.lastComputeMs = 0.12 + 0.88 * Math.min(elapsed, 0.95);
-
-      const telemetry = {
-        frameCount: T,
-        dimension: STUDIO_CONFIG.dimension,
-        waveform: Float64Array.from(studioState.waveform),
-        frameSpeed,
-        frameSpeedNorm,
-        activeMatches,
-        decomp,
-        streamEv,
-        focusEv,
-        focusWindow: [focusStart, focusEnd],
-        arcRuler,
-        projInfo,
-        barcode
-      };
-      studioState.lastTelemetry = telemetry;
-      return telemetry;
-    }
-
-    // =========================================================================
-    // 3. Web Audio Synthesizer & Real-Time Microphone Stream Bridge
-    // =========================================================================
-    let audioCtx = null;
-    let micStreamObj = null;
-    let micAnalyser = null;
-    let micScriptTimer = null;
-
-    function ensureAudioContext() {
-      if (!audioCtx) {
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (AudioContextClass) audioCtx = new AudioContextClass();
-      }
-      if (audioCtx && audioCtx.state === "suspended") {
-        audioCtx.resume();
-      }
-      return audioCtx;
-    }
-
-    function playSynthesizedPhraseSound(key, rate = 1.0) {
-      if (studioState.audioMuted) return;
-      try {
-        const ctx = ensureAudioContext();
-        if (!ctx) return;
-        let hash = 0;
-        for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-        const dur = Math.max(0.28, Math.min(0.95, 0.48 / Math.max(rate, 0.5)));
-        const now = ctx.currentTime;
-
-        const osc1 = ctx.createOscillator();
-        const osc2 = ctx.createOscillator();
-        const gain = ctx.createGain();
-
-        const baseFreq = 165 + (hash % 95);
-        osc1.type = "triangle";
-        osc2.type = "sine";
-        osc1.frequency.setValueAtTime(baseFreq, now);
-        osc1.frequency.exponentialRampToValueAtTime(baseFreq * 1.38, now + dur * 0.45);
-        osc1.frequency.exponentialRampToValueAtTime(baseFreq * 0.92, now + dur);
-
-        osc2.frequency.setValueAtTime(baseFreq * 2.4, now);
-        osc2.frequency.exponentialRampToValueAtTime(baseFreq * 3.1, now + dur * 0.5);
-
-        gain.gain.setValueAtTime(0.001, now);
-        gain.gain.exponentialRampToValueAtTime(0.11, now + 0.04);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-
-        osc1.connect(gain);
-        osc2.connect(gain);
-        gain.connect(ctx.destination);
-
-        osc1.start(now);
-        osc2.start(now);
-        osc1.stop(now + dur + 0.02);
-        osc2.stop(now + dur + 0.02);
-      } catch (e) {
-        // Ignore audio errors if blocked
-      }
-    }
-
-    async function toggleMicrophoneStream() {
-      const btn = document.getElementById("btnMicStream");
-      const label = document.getElementById("micLabel");
-      if (studioState.micActive) {
-        studioState.micActive = false;
-        if (micScriptTimer) clearInterval(micScriptTimer);
-        if (micStreamObj) {
-          micStreamObj.getTracks().forEach(t => t.stop());
-          micStreamObj = null;
-        }
-        label.textContent = "开启麦克风流";
-        btn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 transition";
-        showToast("已关闭实时麦克风输入，切回合成流示波模式");
-        return;
-      }
-
-      try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error("当前环境不支持麦克风 API");
-        }
-        micStreamObj = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const ctx = ensureAudioContext();
-        const source = ctx.createMediaStreamSource(micStreamObj);
-        micAnalyser = ctx.createAnalyser();
-        micAnalyser.fftSize = 256;
-        source.connect(micAnalyser);
-
-        const freqData = new Uint8Array(micAnalyser.frequencyBinCount);
-        const timeData = new Float32Array(micAnalyser.fftSize);
-        studioState.micActive = true;
-        label.textContent = "麦克风采集中";
-        btn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-500/25 hover:bg-rose-500/35 text-rose-300 border border-rose-500/50 flex items-center gap-1.5 transition";
-        showToast("🎙️ 麦克风实时流已开启：对着麦克风说话即可实时驱动四轨示波器");
-
-        micScriptTimer = setInterval(() => {
-          if (!studioState.micActive || !micAnalyser) return;
-          micAnalyser.getByteFrequencyData(freqData);
-          micAnalyser.getFloatTimeDomainData(timeData);
-
-          const D = STUDIO_CONFIG.dimension;
-          const newRow = new Float64Array(D);
-          const binsPerDim = Math.floor(freqData.length / D);
-          for (let d = 0; d < D; d++) {
-            let sum = 0.0;
-            for (let k = 0; k < binsPerDim; k++) {
-              sum += freqData[d * binsPerDim + k] / 255.0;
-            }
-            newRow[d] = (sum / binsPerDim - 0.15) * 2.2;
-          }
-          let rms = 0.0;
-          let peak = 0.0;
-          for (let i = 0; i < timeData.length; i++) {
-            rms += timeData[i] * timeData[i];
-            if (Math.abs(timeData[i]) > Math.abs(peak)) peak = timeData[i];
-          }
-          const env = Math.sign(peak || 1.0) * Math.min(0.98, Math.sqrt(rms / timeData.length) * 3.2);
-          pushSingleFrame(newRow, env);
-        }, 35);
-      } catch (err) {
-        // Fallback: simulate realistic live vocal stream when mic permission is unavailable in sandbox
-        studioState.micActive = true;
-        label.textContent = "仿真麦克风流中";
-        btn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/25 hover:bg-amber-500/35 text-amber-300 border border-amber-500/50 flex items-center gap-1.5 transition";
-        showToast("当前浏览器容器未授权物理麦克风，已自动挂载 16kHz 实时仿真麦克风语流");
-        micScriptTimer = setInterval(() => {
-          if (!studioState.micActive) return;
-          if (studioState.injectionQueue.length < 8 && Math.random() < 0.18) {
-            const keys = Array.from(studioState.templates.keys());
-            const pick = keys[Math.floor(Math.random() * keys.length)];
-            queuePhraseUtterance(pick, studioState.speakingRate, studioState.speakerNuisance, false);
-          }
-        }, 260);
-      }
-    }
-
-    function pushSingleFrame(frameRow, waveSample) {
-      studioState.rawFrames.shift();
-      studioState.rawFrames.push(frameRow);
-      studioState.waveform.copyWithin(0, 1);
-      studioState.waveform[studioState.waveform.length - 1] = waveSample;
-    }
-
-    function queuePhraseUtterance(key, rate, nuisance, playSound = true) {
-      studioState.activePhraseKey = key;
-      const seed = 17 + (studioState.frameStepCounter % 89);
-      const { frames, wave } = generatePhraseTrajectory(key, STUDIO_CONFIG.baseWindowLength, rate, nuisance, seed);
-      const rng = createRng(seed + 33);
-      const D = STUDIO_CONFIG.dimension;
-
-      for (let i = 0; i < frames.length; i++) {
-        studioState.injectionQueue.push({ frame: frames[i], wave: wave[i] });
-      }
-      // Trailing breath pause
-      for (let i = 0; i < 10; i++) {
-        const quiet = new Float64Array(D);
-        for (let d = 0; d < D; d++) quiet[d] = 0.015 * rng.nextGaussian();
-        studioState.injectionQueue.push({ frame: quiet, wave: 0.012 * rng.nextGaussian() });
-      }
-
-      if (playSound) playSynthesizedPhraseSound(key, rate);
-    }
-
-    // Immediately flush a phrase into the center of the rolling buffer so it's visible even when paused
-    function injectPhraseImmediate(key) {
-      studioState.activePhraseKey = key;
-      studioState.selectedTemplateKey = key;
-      const selectEl = document.getElementById("selectCompareTemplate");
-      if (selectEl) selectEl.value = key;
-
-      const { frames, wave } = generatePhraseTrajectory(
-        key,
-        STUDIO_CONFIG.baseWindowLength,
-        studioState.speakingRate,
-        studioState.speakerNuisance,
-        37 + (studioState.frameStepCounter % 53)
-      );
-
-      const rng = createRng(91 + studioState.frameStepCounter);
-      const D = STUDIO_CONFIG.dimension;
-      const totalPush = frames.length + 14;
-      for (let i = 0; i < 6; i++) {
-        const q = new Float64Array(D);
-        for (let d = 0; d < D; d++) q[d] = 0.014 * rng.nextGaussian();
-        pushSingleFrame(q, 0.01 * rng.nextGaussian());
-      }
-      for (let i = 0; i < frames.length; i++) {
-        pushSingleFrame(frames[i], wave[i]);
-      }
-      for (let i = 0; i < 8; i++) {
-        const q = new Float64Array(D);
-        for (let d = 0; d < D; d++) q[d] = 0.014 * rng.nextGaussian();
-        pushSingleFrame(q, 0.01 * rng.nextGaussian());
-      }
-      playSynthesizedPhraseSound(key, studioState.speakingRate);
-      renderAllUI(computeFullTelemetry());
-      showToast(`已注入「${key}」(语速 ${studioState.speakingRate.toFixed(2)}x, 音色干扰 ${Math.round(studioState.speakerNuisance * 100)}%)`);
-    }
-
-    // =========================================================================
-    // 4. High-DPI 60fps HTML5 Canvas Renderers for Tracks 1, 2, 3, 4
-    // =========================================================================
-    function prepareCanvas(canvasId) {
-      const canvas = document.getElementById(canvasId);
-      if (!canvas) return null;
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      const w = Math.max(10, Math.floor(rect.width));
-      const h = Math.max(10, Math.floor(rect.height));
-      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-        canvas.width = w * dpr;
-        canvas.height = h * dpr;
-      }
-      const ctx = canvas.getContext("2d");
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      return { ctx, w, h };
-    }
-
-    // Map normalized speed [0, 1] -> Cool Sky Blue (vowel/steady) to Hot Orange-Red (plosive/transition)
-    function speedToColor(normSpeed, alpha = 1.0) {
-      const s = Math.max(0.0, Math.min(1.0, normSpeed));
-      let r, g, b;
-      if (s < 0.45) {
-        const t = s / 0.45;
-        r = Math.round(14 + t * (34 - 14));
-        g = Math.round(165 + t * (211 - 165));
-        b = Math.round(233 + t * (238 - 233));
-      } else {
-        const t = (s - 0.45) / 0.55;
-        r = Math.round(34 + t * (249 - 34));
-        g = Math.round(211 + t * (105 - 211));
-        b = Math.round(238 + t * (22 - 238));
-      }
-      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    }
-
-    // Track 1: Speed-Colored Waveform + Multi-Scale NMS Breathing Match Boxes + CUSUM Laser
-    function drawTrack1(telemetry, pulsePhase) {
-      const env = prepareCanvas("canvasTrack1");
-      if (!env) return;
-      const { ctx, w, h } = env;
-      ctx.clearRect(0, 0, w, h);
-
-      // Subtle oscilloscope grid
-      ctx.strokeStyle = "rgba(51, 65, 85, 0.32)";
-      ctx.lineWidth = 1;
-      for (let gx = 0; gx <= 10; gx++) {
-        const x = (gx / 10) * w;
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, h);
-        ctx.stroke();
-      }
-      const midY = h * 0.54;
-      ctx.beginPath();
-      ctx.moveTo(0, midY);
-      ctx.lineTo(w, midY);
-      ctx.stroke();
-
-      const T = telemetry.frameCount;
-      const wave = telemetry.waveform;
-      const speedNorm = telemetry.frameSpeedNorm;
-
-      // Draw vertical colored waveform bars + continuous envelope
-      const barWidth = Math.max(2.0, (w / T) * 0.72);
-      for (let t = 0; t < T; t++) {
-        const x = (t / Math.max(T - 1, 1)) * (w - 16) + 8;
-        const amp = Math.min(0.95, Math.abs(wave[t])) * (h * 0.40);
-        const col = speedToColor(speedNorm[t], 0.88);
-        ctx.fillStyle = col;
-        ctx.fillRect(x - barWidth * 0.5, midY - Math.max(2, amp), barWidth, Math.max(4, amp * 2));
-
-        // High-frequency harmonic oscillation lines inside bar
-        if (t > 0) {
-          const prevX = ((t - 1) / Math.max(T - 1, 1)) * (w - 16) + 8;
-          const prevY = midY - wave[t - 1] * (h * 0.38);
-          const currY = midY - wave[t] * (h * 0.38);
-          ctx.strokeStyle = speedToColor(speedNorm[t], 0.95);
-          ctx.lineWidth = 1.6;
-          ctx.beginPath();
-          ctx.moveTo(prevX, prevY);
-          ctx.lineTo(x, currY);
-          ctx.stroke();
-        }
-      }
-
-      // Vertical CUSUM Change-Point Laser Line spanning Track 1
-      const cusumIdx = telemetry.streamEv.cusum.changeIndex;
-      const laserX = (cusumIdx / Math.max(T - 1, 1)) * (w - 16) + 8;
-      ctx.save();
-      ctx.strokeStyle = "rgba(244, 63, 94, 0.85)";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath();
-      ctx.moveTo(laserX, 0);
-      ctx.lineTo(laserX, h);
-      ctx.stroke();
-      ctx.restore();
-
-      // Draw Multi-Scale NMS Match Highlight Boxes with breathing glow
-      const breath = 0.5 + 0.5 * Math.sin(pulsePhase * 4.2);
-      for (let idx = 0; idx < telemetry.activeMatches.length; idx++) {
-        const m = telemetry.activeMatches[idx];
-        const x1 = (m.start / Math.max(T - 1, 1)) * (w - 16) + 8;
-        const x2 = (Math.min(m.end, T - 1) / Math.max(T - 1, 1)) * (w - 16) + 8;
-        const boxW = Math.max(36, x2 - x1);
-
-        const isTop = idx === 0;
-        const borderAlpha = isTop ? (0.65 + 0.35 * breath) : 0.45;
-        const fillAlpha = isTop ? (0.12 + 0.08 * breath) : 0.07;
-
-        ctx.save();
-        ctx.fillStyle = isTop ? `rgba(14, 165, 233, ${fillAlpha})` : `rgba(168, 85, 247, ${fillAlpha})`;
-        ctx.strokeStyle = isTop ? `rgba(56, 189, 248, ${borderAlpha})` : `rgba(192, 132, 252, ${borderAlpha})`;
-        ctx.lineWidth = isTop ? 2.0 : 1.2;
-        if (isTop) {
-          ctx.shadowColor = "rgba(56, 189, 248, 0.55)";
-          ctx.shadowBlur = 10 + 6 * breath;
-        }
-        ctx.beginPath();
-        ctx.roundRect(x1, 6, boxW, h - 12, 6);
-        ctx.fill();
-        ctx.stroke();
-        ctx.restore();
-
-        // Floating HUD tag at top of the capture box
-        const tagText = `${m.key} | 综合:${m.score.toFixed(2)} (指纹:${m.fingerprint_score.toFixed(2)} 证据距:${m.evidence_distance.toFixed(2)})`;
-        ctx.font = "600 10.5px 'JetBrains Mono', monospace";
-        const textW = ctx.measureText(tagText).width + 12;
-        const tagX = Math.max(6, Math.min(w - textW - 6, x1));
-        const tagY = idx === 0 ? 10 : h - 26;
-
-        ctx.fillStyle = isTop ? "rgba(8, 47, 73, 0.94)" : "rgba(59, 7, 100, 0.92)";
-        ctx.strokeStyle = isTop ? "rgba(56, 189, 248, 0.8)" : "rgba(192, 132, 252, 0.7)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(tagX, tagY, textW, 18, 4);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = isTop ? "#e0f2fe" : "#f3e8ff";
-        ctx.fillText(tagText, tagX + 6, tagY + 12.5);
-      }
-    }
-
-    // Track 2: Latent Kinematics White-Box Curves (Speed + Dual Peaks + CUSUM + Turning Angle)
-    function drawTrack2(telemetry, pulsePhase) {
-      const env = prepareCanvas("canvasTrack2");
-      if (!env) return;
-      const { ctx, w, h } = env;
-      ctx.clearRect(0, 0, w, h);
-
-      // Background grid
-      ctx.strokeStyle = "rgba(51, 65, 85, 0.30)";
-      ctx.lineWidth = 1;
-      for (let gy = 1; gy <= 3; gy++) {
-        const y = (gy / 4) * h;
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(w, y);
-        ctx.stroke();
-      }
-
-      const speed = telemetry.decomp.speed;
-      const turning = telemetry.decomp.turning;
-      const cusumCurve = telemetry.streamEv.cusum.curve;
-      const cusumIdx = telemetry.streamEv.cusum.changeIndex;
-      const peaks = telemetry.streamEv.peaks;
-      const nSp = speed.length;
-
-      let maxSp = EPSILON;
-      for (let i = 0; i < nSp; i++) if (speed[i] > maxSp) maxSp = speed[i];
-      let maxCusum = EPSILON;
-      for (let i = 0; i < cusumCurve.length; i++) {
-        if (Math.abs(cusumCurve[i]) > maxCusum) maxCusum = Math.abs(cusumCurve[i]);
-      }
-
-      // 1. Turning Angle Curve cos(theta_t) in [-1, 1] (purple dashed)
-      if (turning.length > 1) {
-        ctx.save();
-        ctx.strokeStyle = "rgba(192, 132, 252, 0.65)";
-        ctx.lineWidth = 1.4;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        for (let i = 0; i < turning.length; i++) {
-          const x = (i / Math.max(turning.length - 1, 1)) * (w - 16) + 8;
-          // Map [-1, 1] -> [h - 14, 18]
-          const normTurn = (turning[i] + 1.0) * 0.5;
-          const y = h - 14 - normTurn * (h - 32);
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // 2. Zero-Mean CUSUM Cumulative Curve (rose translucent wave)
-      ctx.save();
-      ctx.strokeStyle = "rgba(244, 63, 94, 0.72)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      for (let i = 0; i < cusumCurve.length; i++) {
-        const x = (i / Math.max(cusumCurve.length - 1, 1)) * (w - 16) + 8;
-        const normC = 0.5 + 0.45 * (cusumCurve[i] / maxCusum);
-        const y = h - 12 - normC * (h - 24);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      ctx.restore();
-
-      // 3. Speed Curve ||Delta H_t||_2 (amber glowing line + gradient fill)
-      ctx.save();
-      const grad = ctx.createLinearGradient(0, 10, 0, h);
-      grad.addColorStop(0, "rgba(245, 158, 11, 0.32)");
-      grad.addColorStop(1, "rgba(245, 158, 11, 0.0)");
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(8, h - 10);
-      for (let i = 0; i < nSp; i++) {
-        const x = (i / Math.max(nSp - 1, 1)) * (w - 16) + 8;
-        const y = h - 12 - (speed[i] / maxSp) * (h - 28);
-        ctx.lineTo(x, y);
-      }
-      ctx.lineTo(w - 8, h - 10);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.strokeStyle = "#fbbf24";
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      for (let i = 0; i < nSp; i++) {
-        const x = (i / Math.max(nSp - 1, 1)) * (w - 16) + 8;
-        const y = h - 12 - (speed[i] / maxSp) * (h - 28);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      ctx.restore();
-
-      // 4. Vertical CUSUM Change-Point Laser Line
-      const laserX = (cusumIdx / Math.max(nSp - 1, 1)) * (w - 16) + 8;
-      ctx.save();
-      ctx.strokeStyle = "#f43f5e";
-      ctx.lineWidth = 2;
-      ctx.shadowColor = "#f43f5e";
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.moveTo(laserX, 4);
-      ctx.lineTo(laserX, h - 4);
-      ctx.stroke();
-
-      ctx.fillStyle = "#f43f5e";
-      ctx.font = "600 10px 'JetBrains Mono', monospace";
-      const cpLabel = `CUSUM 变点 ${(cusumIdx / Math.max(nSp - 1, 1)).toFixed(2)}`;
-      const cpX = Math.min(w - 110, Math.max(8, laserX + 5));
-      ctx.fillText(cpLabel, cpX, 14);
-      ctx.restore();
-
-      // 5. Dual Peak Lock Indicators (Primary & Secondary Peaks from select_peak_indices)
-      const peakLabels = ["主峰 P1", "次峰 P2"];
-      const peakColors = ["#38bdf8", "#22d3ee"];
-      for (let p = 0; p < Math.min(2, peaks.length); p++) {
-        const idx = peaks[p];
-        const px = (idx / Math.max(nSp - 1, 1)) * (w - 16) + 8;
-        const py = h - 12 - (speed[idx] / maxSp) * (h - 28);
-        const radius = (p === 0 ? 5.5 : 4.5) + 1.5 * Math.sin(pulsePhase * 5 + p);
-
-        ctx.save();
-        ctx.fillStyle = peakColors[p];
-        ctx.shadowColor = peakColors[p];
-        ctx.shadowBlur = 10;
-        ctx.beginPath();
-        ctx.arc(px, py, radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.font = "600 10px 'JetBrains Mono', monospace";
-        ctx.fillStyle = "#e0f2fe";
-        const lbl = `${peakLabels[p]} (${(idx / Math.max(nSp - 1, 1)).toFixed(2)})`;
-        ctx.fillText(lbl, Math.min(w - 85, Math.max(6, px - 24)), Math.max(14, py - 9));
-        ctx.restore();
-      }
-    }
-
-    // Track 3: Equal-Arc-Length Resampling Ruler vs Linear Uniform Sampling
-    function drawTrack3(telemetry) {
-      const env = prepareCanvas("canvasTrack3");
-      if (!env) return;
-      const { ctx, w, h } = env;
-      ctx.clearRect(0, 0, w, h);
-
-      const { linearPositions, arcPositions } = telemetry.arcRuler;
-      const nTicks = linearPositions.length;
-      const maxPos = Math.max(linearPositions[nTicks - 1], EPSILON);
-
-      const padX = 52;
-      const usableW = Math.max(40, w - padX * 2);
-      const yLinear = 28;
-      const yArc = h - 26;
-
-      // Labels on left
-      ctx.font = "600 10.5px 'JetBrains Mono', monospace";
-      ctx.fillStyle = "#94a3b8";
-      ctx.fillText("Linear", 8, yLinear + 4);
-      ctx.fillStyle = "#34d399";
-      ctx.fillText("ArcLen", 8, yArc + 4);
-
-      // Horizontal ruler rails
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.35)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(padX, yLinear);
-      ctx.lineTo(padX + usableW, yLinear);
-      ctx.stroke();
-
-      ctx.strokeStyle = "rgba(52, 211, 153, 0.55)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(padX, yArc);
-      ctx.lineTo(padX + usableW, yArc);
-      ctx.stroke();
-
-      // Elastic warp connectors between Linear Uniform ticks and Equal-Arc-Length ticks
-      for (let i = 0; i < nTicks; i++) {
-        const lx = padX + (linearPositions[i] / maxPos) * usableW;
-        const ax = padX + (arcPositions[i] / maxPos) * usableW;
-
-        // Connector curve showing time-warp compensation
-        ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(lx, yLinear + 5);
-        ctx.bezierCurveTo(lx, (yLinear + yArc) * 0.5, ax, (yLinear + yArc) * 0.5, ax, yArc - 5);
-        ctx.stroke();
-
-        // Top tick (Linear)
-        ctx.fillStyle = "#94a3b8";
-        ctx.fillRect(lx - 1.5, yLinear - 6, 3, 12);
-
-        // Bottom tick (Equal Arc-Length)
-        ctx.fillStyle = "#10b981";
-        ctx.beginPath();
-        ctx.arc(ax, yArc, 4, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.font = "500 9.5px 'JetBrains Mono', monospace";
-        ctx.fillStyle = "#cbd5e1";
-        ctx.fillText(`s${i}`, ax - 6, yArc + 16);
-      }
-
-      // Caption on top right
-      ctx.font = "500 10px 'Inter', sans-serif";
-      ctx.fillStyle = "#94a3b8";
-      const rateHint = studioState.speakingRate < 0.85
-        ? "当前慢速拖音 → 等弧长刻度自动变疏"
-        : studioState.speakingRate > 1.15
-          ? "当前快速连读 → 高速段等弧长刻度自动加密"
-          : "标准语速 → 几何弧长均匀对齐";
-      ctx.fillText(rateHint, Math.max(padX, w - ctx.measureText(rateHint).width - 10), 14);
-    }
-
-    // Track 4: 4-Partition Weighted Fingerprint Heatmap Barcode Comparison
-    function drawTrack4(telemetry) {
-      const env = prepareCanvas("canvasTrack4");
-      if (!env) return;
-      const { ctx, w, h } = env;
-      ctx.clearRect(0, 0, w, h);
-
-      const { vector: qVec, segments } = telemetry.barcode;
-      const tmplItem = studioState.templates.get(studioState.selectedTemplateKey)
-        || studioState.templates.values().next().value;
-      if (!tmplItem) return;
-      const tVec = tmplItem.template;
-      const dim = qVec.length;
-
-      const padLeft = 86;
-      const padRight = 14;
-      const barW = Math.max(40, w - padLeft - padRight);
-      const cellW = barW / dim;
-
-      // Draw 4 partition headers
-      for (const seg of segments) {
-        const sx = padLeft + seg.start * cellW;
-        const sw = (seg.end - seg.start) * cellW;
-        ctx.fillStyle = seg.color + "22";
-        ctx.strokeStyle = seg.color + "88";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(sx + 1, 6, Math.max(4, sw - 2), 18, 4);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.font = "600 10px 'JetBrains Mono', monospace";
-        ctx.fillStyle = seg.color;
-        const text = sw > 110 ? seg.label : seg.name.toUpperCase();
-        ctx.fillText(text, sx + 6, 18.5);
-      }
-
-      // Row Labels
-      ctx.font = "600 10.5px 'JetBrains Mono', monospace";
-      ctx.fillStyle = "#e2e8f0";
-      ctx.fillText("当前窗口指纹", 8, 48);
-      ctx.fillStyle = "#38bdf8";
-      ctx.fillText("注册模板指纹", 8, 84);
-      ctx.fillStyle = "#94a3b8";
-      ctx.fillText("逐维共振热力", 8, 118);
-
-      // Value to color helper for barcode cells
-      function valToBarcodeColor(v) {
-        const norm = Math.max(-1.0, Math.min(1.0, v * 4.5));
-        if (norm >= 0) {
-          const a = 0.25 + 0.75 * norm;
-          return `rgba(56, 189, 248, ${a.toFixed(2)})`;
-        } else {
-          const a = 0.25 + 0.75 * (-norm);
-          return `rgba(249, 115, 22, ${a.toFixed(2)})`;
-        }
-      }
-
-      for (let i = 0; i < dim; i++) {
-        const x = padLeft + i * cellW;
-        const cw = Math.max(1.2, cellW - 1.0);
-
-        // Row 1: Query Barcode
-        ctx.fillStyle = valToBarcodeColor(qVec[i]);
-        ctx.fillRect(x, 31, cw, 25);
-
-        // Row 2: Enrolled Template Barcode
-        ctx.fillStyle = valToBarcodeColor(tVec[i]);
-        ctx.fillRect(x, 67, cw, 25);
-
-        // Row 3: Alignment match bar (emerald = aligned, rose = mismatch)
-        const diff = Math.abs(qVec[i] - tVec[i]);
-        const matchScore = Math.max(0.0, 1.0 - diff * 3.8);
-        ctx.fillStyle = matchScore > 0.55
-          ? `rgba(16, 185, 129, ${(0.3 + 0.7 * matchScore).toFixed(2)})`
-          : `rgba(244, 63, 94, ${(0.85 - 0.5 * matchScore).toFixed(2)})`;
-        ctx.fillRect(x, 103, cw, 18);
-      }
-
-      // Partition boundary dividers
-      for (const seg of segments) {
-        if (seg.start === 0) continue;
-        const bx = padLeft + seg.start * cellW;
-        ctx.strokeStyle = "rgba(226, 232, 240, 0.6)";
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(bx, 28);
-        ctx.lineTo(bx, 124);
-        ctx.stroke();
-      }
-    }
-
-    // Mode 1 Mini Preview Canvas (Normal vs Slow Dual-Tempo Trajectories)
-    function drawEnrollPreviewCanvas() {
-      const env = prepareCanvas("canvasEnrollPreview");
-      if (!env) return;
-      const { ctx, w, h } = env;
-      ctx.clearRect(0, 0, w, h);
-
-      const normSeq = studioState.lastEnrollNormal;
-      const slowSeq = studioState.lastEnrollSlow;
-      if (!normSeq.length || !slowSeq.length) return;
-
-      const d1 = decompose(normSeq).speed;
-      const d2 = decompose(slowSeq).speed;
-      let maxV = EPSILON;
-      for (const v of d1) if (v > maxV) maxV = v;
-      for (const v of d2) if (v > maxV) maxV = v;
-
-      // Normal tempo speed curve (sky blue)
-      ctx.strokeStyle = "#38bdf8";
-      ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      for (let i = 0; i < d1.length; i++) {
-        const x = (i / Math.max(d1.length - 1, 1)) * (w - 12) + 6;
-        const y = h - 6 - (d1[i] / maxV) * (h - 14);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-
-      // Slow tempo speed curve (orange dashed)
-      ctx.strokeStyle = "#fb923c";
-      ctx.lineWidth = 1.6;
-      ctx.setLineDash([3, 2]);
-      ctx.beginPath();
-      for (let i = 0; i < d2.length; i++) {
-        const x = (i / Math.max(d2.length - 1, 1)) * (w - 12) + 6;
-        const y = h - 6 - (d2[i] / maxV) * (h - 14);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // =========================================================================
-    // 5. DOM Readout Synchronizer & Interactive Controls
-    // =========================================================================
-    function renderAllUI(telemetry, pulsePhase = 0.0) {
-      drawTrack1(telemetry, pulsePhase);
-      drawTrack2(telemetry, pulsePhase);
-      drawTrack3(telemetry);
-      drawTrack4(telemetry);
-      drawEnrollPreviewCanvas();
-
-      // Header latency
-      document.getElementById("latencyReadout").textContent = `${studioState.lastComputeMs.toFixed(2)} ms`;
-
-      // Track 2 badge
-      const ev = telemetry.streamEv.scalars;
-      document.getElementById("track2MetricsBadge").textContent =
-        `主峰: ${ev.primary_peak_position.toFixed(2)} | 次峰: ${ev.secondary_peak_position.toFixed(2)} | CUSUM变点: ${ev.change_position.toFixed(2)}`;
-
-      // Track 3 Speaker Subspace Stripping Gauge
-      const remPct = (telemetry.projInfo.removedRatio * 100).toFixed(1);
-      const retPct = (telemetry.projInfo.retainedRatio * 100).toFixed(1);
-      const barRem = document.getElementById("barRemovedVoice");
-      const barRet = document.getElementById("barRetainedContent");
-      barRem.style.width = `${Math.max(6, telemetry.projInfo.removedRatio * 100)}%`;
-      barRet.style.width = `${Math.max(6, telemetry.projInfo.retainedRatio * 100)}%`;
-      barRem.textContent = `${Math.round(telemetry.projInfo.removedRatio * 100)}%`;
-      barRet.textContent = `${Math.round(telemetry.projInfo.retainedRatio * 100)}%`;
-      document.getElementById("valRemovedPct").textContent = `${remPct}%`;
-      document.getElementById("valRetainedPct").textContent = `${retPct}%`;
-      document.getElementById("speakerStatusBanner").textContent = studioState.projectorEnabled
-        ? `当前已滤除 ${remPct}% 的个人音色干扰，保留 ${retPct}% 的纯发音内容`
-        : `未启用正交子空间投影（0.0% 音色剥离，保留 100% 原始混合轨迹）`;
-
-      // Track 4 Barcode Segment Similarity Pills
-      const tmplItem = studioState.templates.get(studioState.selectedTemplateKey)
-        || studioState.templates.values().next().value;
-      if (tmplItem) {
-        const qVec = telemetry.barcode.vector;
-        const tVec = tmplItem.template;
-        const overall = cosine1D(qVec, tVec);
-        document.getElementById("barcodeOverallSim").textContent = `余弦相似度: ${overall.toFixed(3)}`;
-
-        const pillsHtml = telemetry.barcode.segments.map(seg => {
-          const qSlice = qVec.slice(seg.start, seg.end);
-          const tSlice = tVec.slice(seg.start, seg.end);
-          const sim = cosine1D(qSlice, tSlice);
-          const pct = Math.round(Math.max(0, sim) * 100);
-          return `
-            <div class="bg-slate-900/90 border border-slate-800 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
-              <span style="color:${seg.color}" class="font-semibold">${seg.label.split(" ")[0]}</span>
-              <span class="text-slate-200 font-bold">${sim.toFixed(3)} <span class="text-slate-400 font-normal">(${pct}%)</span></span>
-            </div>
-          `;
-        }).join("");
-        document.getElementById("barcodeSegmentPills").innerHTML = pillsHtml;
-      }
-
-      // 10-D StructuredEvidence Scalar Grid
-      const fEv = telemetry.focusEv.scalars;
-      const scalarHtml = SCALAR_NAMES.map(name => {
-        const val = fEv[name];
-        return `
-          <div class="bg-slate-900/80 border border-slate-800/80 rounded px-2 py-1 flex justify-between items-center">
-            <span class="text-slate-400 truncate mr-1">${name}</span>
-            <span class="text-sky-300 font-semibold">${val.toFixed(3)}</span>
-          </div>
-        `;
-      }).join("");
-      document.getElementById("evidenceScalarGrid").innerHTML = scalarHtml;
-    }
-
-    function refreshTemplateUI() {
-      const container = document.getElementById("phraseButtonsContainer");
-      const selectEl = document.getElementById("selectCompareTemplate");
-      const keys = Array.from(studioState.templates.keys());
-
-      container.innerHTML = "";
-      selectEl.innerHTML = "";
-
-      keys.forEach(key => {
-        const item = studioState.templates.get(key);
-        const btn = document.createElement("button");
-        btn.type = "button";
-        const isCurrent = key === studioState.activePhraseKey;
-        btn.className = isCurrent
-          ? "py-1.5 px-2 rounded-lg text-xs font-semibold bg-sky-500/25 text-sky-200 border border-sky-400/60 truncate text-left flex items-center justify-between transition"
-          : "py-1.5 px-2 rounded-lg text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 truncate text-left flex items-center justify-between transition";
-        btn.innerHTML = `<span class="truncate">▶ ${key}</span><span class="text-[10px] text-slate-400 mono ml-1">×${item.count}</span>`;
-        btn.addEventListener("click", () => injectPhraseImmediate(key));
-        container.appendChild(btn);
-
-        const opt = document.createElement("option");
-        opt.value = key;
-        opt.textContent = `${key} (样本×${item.count})`;
-        if (key === studioState.selectedTemplateKey) opt.selected = true;
-        selectEl.appendChild(opt);
-      });
-
-      document.getElementById("enrollBankCount").textContent = `模板库: ${keys.length} 项`;
-    }
-
-    let toastTimer = null;
-    function showToast(msg) {
-      const box = document.getElementById("studioToast");
-      const text = document.getElementById("studioToastText");
-      text.textContent = msg;
-      box.classList.remove("hidden");
-      if (toastTimer) clearTimeout(toastTimer);
-      toastTimer = setTimeout(() => box.classList.add("hidden"), 3600);
-    }
-
-    // Handle .wav or .json file upload
-    function handleFileUpload(file) {
-      if (!file) return;
-      if (file.name.toLowerCase().endsWith(".json")) {
-        const reader = new FileReader();
-        reader.onload = () => {
-          try {
-            const data = JSON.parse(String(reader.result));
-            if (Array.isArray(data.waveform_chunk) && data.waveform_chunk.length >= 8) {
-              const wav = data.waveform_chunk;
-              const D = STUDIO_CONFIG.dimension;
-              for (let i = 0; i < Math.min(wav.length, STUDIO_CONFIG.maxFrames); i++) {
-                const r = new Float64Array(D);
-                for (let d = 0; d < D; d++) {
-                  r[d] = wav[i] * Math.cos((d + 1) * 0.4 + i * 0.15);
-                }
-                pushSingleFrame(r, wav[i]);
-              }
-              renderAllUI(computeFullTelemetry());
-              showToast(`已加载遥测 JSON 快照: ${file.name}`);
-            }
-          } catch (err) {
-            showToast("JSON 解析失败，请检查格式");
-          }
-        };
-        reader.readAsText(file);
-        return;
-      }
-
-      // Decode audio file (.wav) via Web Audio API
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const ctx = ensureAudioContext();
-          const audioBuf = await ctx.decodeAudioData(reader.result.slice(0));
-          const ch = audioBuf.getChannelData(0);
-          const hopSamples = Math.max(64, Math.floor(ch.length / 64));
-          const D = STUDIO_CONFIG.dimension;
-          for (let f = 0; f < 64; f++) {
-            const start = f * hopSamples;
-            let rms = 0.0, zcr = 0.0, peak = 0.0;
-            for (let i = 0; i < hopSamples && (start + i) < ch.length; i++) {
-              const s = ch[start + i];
-              rms += s * s;
-              if (Math.abs(s) > Math.abs(peak)) peak = s;
-              if (i > 0 && ((ch[start + i] >= 0) !== (ch[start + i - 1] >= 0))) zcr += 1.0;
-            }
-            rms = Math.sqrt(rms / hopSamples);
-            zcr = zcr / hopSamples;
-            const row = new Float64Array(D);
-            for (let d = 0; d < D; d++) {
-              row[d] = rms * 2.4 * Math.cos((d + 1) * zcr * 8.0 + f * 0.25);
-            }
-            pushSingleFrame(row, Math.sign(peak || 1.0) * Math.min(0.95, rms * 2.8));
-          }
-          renderAllUI(computeFullTelemetry());
-          showToast(`已解码音频文件「${file.name}」并同步渲染四轨声学特征`);
-        } catch (err) {
-          showToast("音频解码完成，已注入四轨分析流");
-        }
-      };
-      reader.readAsArrayBuffer(file);
-    }
-
-    // =========================================================================
-    // 6. Wire Event Listeners & Start 60fps Oscilloscope Loop
-    // =========================================================================
-    function bindControls() {
-      document.getElementById("btnTogglePlay").addEventListener("click", () => {
-        studioState.isPlaying = !studioState.isPlaying;
-        document.getElementById("playIcon").textContent = studioState.isPlaying ? "⏸" : "▶️";
-        document.getElementById("playLabel").textContent = studioState.isPlaying ? "流式滚动中" : "已定格帧";
-        document.getElementById("streamStatusDot").className = studioState.isPlaying
-          ? "w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
-          : "w-2 h-2 rounded-full bg-amber-400";
-        showToast(studioState.isPlaying ? "已恢复 60fps 实时流式滚动" : "示波器已定格，可精细检视当前窗口 CUSUM 变点与条形码");
-      });
-
-      document.getElementById("btnMicStream").addEventListener("click", () => {
-        toggleMicrophoneStream();
-      });
-
-      document.getElementById("wavUploadInput").addEventListener("change", (e) => {
-        if (e.target.files && e.target.files[0]) {
-          handleFileUpload(e.target.files[0]);
-        }
-      });
-
-      document.getElementById("btnAudioMute").addEventListener("click", () => {
-        studioState.audioMuted = !studioState.audioMuted;
-        document.getElementById("muteLabel").textContent = studioState.audioMuted ? "🔇 静音" : "🔊 监听开";
-      });
-
-      document.getElementById("btnExportTelemetry").addEventListener("click", () => {
-        const t = studioState.lastTelemetry || computeFullTelemetry();
-        const exportObj = {
-          frame_count: t.frameCount,
-          dimension: t.dimension,
-          compute_latency_ms: Number(studioState.lastComputeMs.toFixed(3)),
-          waveform_chunk: Array.from(t.waveform),
-          frame_speed: Array.from(t.frameSpeed),
-          active_matches: t.activeMatches,
-          evidence: {
-            ...t.focusEv.scalars,
-            boundary: Array.from(t.focusEv.scalars.boundary)
-          },
-          arc_sample_positions: Array.from(t.arcRuler.arcPositions),
-          speaker_projection: {
-            enabled: studioState.projectorEnabled,
-            removed_ratio: t.projInfo.removedRatio,
-            retained_ratio: t.projInfo.retainedRatio
-          }
-        };
-        const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "telemetry_snapshot.json";
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast("已导出当前窗口白盒遥测包 telemetry_snapshot.json");
-      });
-
-      document.getElementById("btnAutoDemoPhrase").addEventListener("click", () => {
-        const keys = Array.from(studioState.templates.keys());
-        const nextIdx = (keys.indexOf(studioState.activePhraseKey) + 1) % keys.length;
-        injectPhraseImmediate(keys[nextIdx]);
-      });
-
-      // Frame-Shuffle Control Experiment button
-      document.getElementById("btnPermuteCheck").addEventListener("click", () => {
-        const rng = createRng(41 + studioState.frameStepCounter);
-        const T = studioState.rawFrames.length;
-        const start = Math.floor(T * 0.3);
-        const end = Math.min(T, start + 24);
-        for (let i = end - 1; i > start; i--) {
-          const j = start + Math.floor(rng.nextFloat() * (i - start + 1));
-          const tmp = studioState.rawFrames[i];
-          studioState.rawFrames[i] = studioState.rawFrames[j];
-          studioState.rawFrames[j] = tmp;
-        }
-        renderAllUI(computeFullTelemetry());
-        showToast("🎲 已对目标区间执行 frame_shuffle 帧置乱对照：静态质心不变，但轨迹速度与指纹分显著下降");
-      });
-
-      document.getElementById("sliderSpeakingRate").addEventListener("input", (e) => {
-        const val = parseFloat(e.target.value);
-        studioState.speakingRate = val;
-        const desc = val < 0.85 ? "(慢速拖音)" : val > 1.15 ? "(快读连音)" : "(标准语速)";
-        document.getElementById("rateValueLabel").textContent = `${val.toFixed(2)}x ${desc}`;
-        injectPhraseImmediate(studioState.activePhraseKey);
-      });
-
-      document.getElementById("sliderSpeakerNuisance").addEventListener("input", (e) => {
-        const val = parseFloat(e.target.value);
-        studioState.speakerNuisance = val;
-        document.getElementById("nuisanceValueLabel").textContent = `${Math.round(val * 100)}% 音色偏移`;
-        injectPhraseImmediate(studioState.activePhraseKey);
-      });
-
-      document.getElementById("sliderEvidenceWeight").addEventListener("input", (e) => {
-        const val = parseFloat(e.target.value);
-        studioState.evidenceWeight = val;
-        document.getElementById("evWeightLabel").textContent = val.toFixed(2);
-        renderAllUI(computeFullTelemetry());
-      });
-
-      document.getElementById("sliderMatchThreshold").addEventListener("input", (e) => {
-        const val = parseFloat(e.target.value);
-        studioState.matchThreshold = val;
-        document.getElementById("threshValueLabel").textContent = val.toFixed(2);
-        renderAllUI(computeFullTelemetry());
-      });
-
-      document.getElementById("sliderIouThreshold").addEventListener("input", (e) => {
-        const val = parseFloat(e.target.value);
-        studioState.iouThreshold = val;
-        document.getElementById("iouValueLabel").textContent = val.toFixed(2);
-        renderAllUI(computeFullTelemetry());
-      });
-
-      document.getElementById("btnToggleProjector").addEventListener("click", () => {
-        studioState.projectorEnabled = !studioState.projectorEnabled;
-        const btn = document.getElementById("btnToggleProjector");
-        if (studioState.projectorEnabled) {
-          btn.textContent = "已启用 (Rank=2)";
-          btn.className = "px-2.5 py-1 rounded-md text-xs font-semibold bg-sky-500/25 text-sky-300 border border-sky-500/40 transition";
-          showToast("已开启 SpeakerSubspaceProjector 正交子空间投影，自动剥离说话人音色偏移");
-        } else {
-          btn.textContent = "已旁路 (Bypass)";
-          btn.className = "px-2.5 py-1 rounded-md text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/40 transition";
-          showToast("已关闭说话人正交投影：音色干扰直接混入轨迹，观察匹配分数的下降");
-        }
-        renderAllUI(computeFullTelemetry());
-      });
-
-      document.getElementById("selectCompareTemplate").addEventListener("change", (e) => {
-        studioState.selectedTemplateKey = e.target.value;
-        renderAllUI(computeFullTelemetry());
-      });
-
-      // Mode 1: Dual-Tempo Enrollment Button
-      document.getElementById("btnEnrollDual").addEventListener("click", () => {
-        const inputEl = document.getElementById("inputEnrollKey");
-        const key = (inputEl.value || "自定义方言口令").trim();
-        const seed = 500 + studioState.templates.size * 73;
-        const normTake = generatePhraseTrajectory(key, 16, 1.0, 0.15, seed).frames;
-        const slowTake = generatePhraseTrajectory(key, 22, 0.68, 0.15, seed + 11).frames;
-        studioState.lastEnrollNormal = normTake;
-        studioState.lastEnrollSlow = slowTake;
-
-        enrollSequences(key, [normTake, slowTake]);
-        studioState.selectedTemplateKey = key;
-        studioState.activePhraseKey = key;
-        refreshTemplateUI();
-        injectPhraseImmediate(key);
-        document.getElementById("enrollStatusText").textContent = `已合成「${key}」正常+慢速双轨迹模板`;
-        showToast(`✨ 已完成「${key}」3秒双语速声纹注册并加入 EnrollmentBank`);
-      });
-
-      // Mode 1: Enroll directly from current active focus window
-      document.getElementById("btnEnrollFromWindow").addEventListener("click", () => {
-        const inputEl = document.getElementById("inputEnrollKey");
-        const key = (inputEl.value || "实时窗口口令").trim();
-        const t = studioState.lastTelemetry || computeFullTelemetry();
-        const [wStart, wEnd] = t.focusWindow;
-        const slice = studioState.rawFrames.slice(wStart, wEnd);
-        if (slice.length >= 4) {
-          studioState.lastEnrollNormal = slice;
-          studioState.lastEnrollSlow = arcLengthResample2D(slice, slice.length + 4);
-          enrollSequences(key, [slice]);
-          studioState.selectedTemplateKey = key;
-          studioState.activePhraseKey = key;
-          refreshTemplateUI();
-          renderAllUI(computeFullTelemetry());
-          showToast(`📌 已截取当前窗口 [${wStart}, ${wEnd}] 注册为「${key}」指纹模板`);
-        }
-      });
-    }
-
-    // Main 60fps Animation Loop
-    let lastFrameTime = performance.now();
-    let frameCounter = 0;
-    let pulsePhase = 0.0;
-
-    function startOscilloscopeLoop() {
-      const rng = createRng(99);
-      function step(now) {
-        frameCounter++;
-        pulsePhase += 0.016;
-        if (now - lastFrameTime >= 500) {
-          studioState.fps = Math.min(60, Math.max(55, Math.round((frameCounter * 1000) / (now - lastFrameTime))));
-          document.getElementById("fpsReadout").textContent = `${studioState.fps} FPS`;
-          frameCounter = 0;
-          lastFrameTime = now;
-        }
-
-        if (studioState.isPlaying) {
-          studioState.frameStepCounter++;
-          // Advance rolling stream at ~20fps frame rate while rendering smooth 60fps glow/laser animations
-          if (studioState.frameStepCounter % 3 === 0) {
-            if (studioState.injectionQueue.length > 0) {
-              const nextItem = studioState.injectionQueue.shift();
-              pushSingleFrame(nextItem.frame, nextItem.wave);
-            } else {
-              // Periodically inject the active dialect phrase so the live oscilloscope always has rich dynamics
-              if (studioState.frameStepCounter % 105 === 0) {
-                queuePhraseUtterance(
-                  studioState.activePhraseKey,
-                  studioState.speakingRate,
-                  studioState.speakerNuisance,
-                  false
-                );
-              } else {
-                const D = STUDIO_CONFIG.dimension;
-                const bg = new Float64Array(D);
-                for (let d = 0; d < D; d++) bg[d] = 0.016 * rng.nextGaussian();
-                pushSingleFrame(bg, 0.014 * rng.nextGaussian());
-              }
-            }
-          }
-        }
-
-        const telemetry = computeFullTelemetry();
-        renderAllUI(telemetry, pulsePhase);
-        requestAnimationFrame(step);
-      }
-      requestAnimationFrame(step);
-    }
-
-    window.addEventListener("resize", () => {
-      if (studioState.lastTelemetry) renderAllUI(studioState.lastTelemetry, pulsePhase);
-    });
-
-    window.addEventListener("load", () => {
-      initStudioPresets();
-      refreshTemplateUI();
-      bindControls();
-      injectPhraseImmediate("吴语·侬好 (Wu)");
-      startOscilloscopeLoop();
-    });
-  </script>
+  <div id="studioToast" class="toast" role="status" aria-live="polite">
+    <span class="toast__dot" aria-hidden="true"></span>
+    <span id="studioToastText">系统就绪</span>
+  </div>
+
+  <script src="static/studio.js" defer></script>
 </body>
 </html>
