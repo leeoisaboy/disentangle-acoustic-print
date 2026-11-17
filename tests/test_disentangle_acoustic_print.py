@@ -11,17 +11,28 @@ import numpy as np
 from disentangle_acoustic_print import (
     EnrollmentBank,
     EvidenceCalibrator,
+    HiddenStateBridge,
+    MelDeltaExtractor,
     OnlineMatcher,
+    RollingAcousticStream,
     SpeakerSubspaceProjector,
     arc_length_resample,
+    build_telemetry_packet,
+    compute_arc_sample_positions,
+    compute_cusum_curve,
+    compute_speaker_stripping_metrics,
+    decode_wav_bytes,
     decompose,
+    decompose_fingerprint_barcode,
     disentanglement_report,
+    encode_wav_bytes,
     extract_evidence,
     evidence_distance,
     fingerprint,
     make_cross_voice_dataset,
     make_stream,
     select_peak_indices,
+    synthesize_phrase_waveform,
     temporal_iou,
 )
 from disentangle_acoustic_print.cli import main
@@ -33,6 +44,7 @@ from disentangle_acoustic_print.geometry import (
     smooth_time_warp,
 )
 from disentangle_acoustic_print.probing import layerwise_probe, rank_auc
+from studio.app import StudioSession
 
 
 class LibraryTests(unittest.TestCase):
@@ -183,8 +195,6 @@ class LibraryTests(unittest.TestCase):
         np.testing.assert_allclose(cleaned[:, 1], sequences[2][:, 1], atol=1e-10)
 
     def test_arc_length_resampling_is_time_warp_stable(self) -> None:
-        from disentangle_acoustic_print.geometry import smooth_time_warp
-
         positions = np.linspace(0.0, 1.0, 41)
         curve = np.stack((np.sin(2.0 * np.pi * positions), np.cos(3.0 * np.pi * positions)), axis=1)
         warped = smooth_time_warp(curve, strength=0.45, seed=9)
@@ -278,6 +288,68 @@ class LibraryTests(unittest.TestCase):
             main(["demo"])
         value = json.loads(buffer.getvalue())
         self.assertEqual(value["sample_count"], 36)
+
+    def test_audio_bridge_wav_roundtrip_and_mel_extractor(self) -> None:
+        waveform = synthesize_phrase_waveform("wu-dialect", duration_sec=0.6, sample_rate=16000)
+        wav_bytes = encode_wav_bytes(waveform, sample_rate=16000)
+        decoded, sr = decode_wav_bytes(wav_bytes)
+        self.assertEqual(sr, 16000)
+        np.testing.assert_allclose(decoded, waveform, atol=1e-4)
+
+        extractor = MelDeltaExtractor(sample_rate=16000, n_mels=8, include_delta=True)
+        frames, envelope = extractor.extract_with_envelope(decoded, sample_rate=sr)
+        self.assertEqual(frames.ndim, 2)
+        self.assertEqual(frames.shape[1], 16)
+        self.assertEqual(len(envelope), len(frames))
+
+        bridge = HiddenStateBridge(fallback=extractor, target_dimension=12)
+        projected_frames = bridge.extract(decoded, sample_rate=sr)
+        self.assertEqual(projected_frames.shape, (len(frames), 12))
+
+    def test_telemetry_packet_contains_all_four_tracks(self) -> None:
+        dataset = make_cross_voice_dataset(dimensions=6)
+        projector = SpeakerSubspaceProjector.fit(
+            dataset["sequences"], dataset["speaker_ids"], rank=1
+        )
+        bank = EnrollmentBank(projector=projector, evidence_weight=0.25)
+        for seq, label in zip(dataset["sequences"], dataset["content_ids"]):
+            bank.enroll(label, [seq])
+        matcher = OnlineMatcher(bank, window_length=12, scales=(0.75, 1.0, 1.25), hop=2)
+        stream = np.vstack(dataset["sequences"][:3])
+
+        packet = build_telemetry_packet(stream, matcher=matcher, bank=bank, projector=projector)
+        self.assertEqual(packet["frame_count"], len(stream))
+        self.assertEqual(len(packet["frame_speed"]), len(stream))
+        self.assertIn("kinematics", packet)
+        self.assertIn("cusum", packet["kinematics"])
+        self.assertIn("arc_ruler", packet)
+        self.assertTrue(packet["speaker_projection"]["enabled"])
+        self.assertGreater(packet["speaker_projection"]["removed_ratio"], 0.0)
+        self.assertEqual(len(packet["barcode"]["segments"]), 4)
+        np.testing.assert_allclose(
+            packet["barcode"]["vector"],
+            fingerprint(projector.transform(stream[packet["barcode"]["focus_window"][0] : packet["barcode"]["focus_window"][1]])),
+            atol=1e-10,
+        )
+
+    def test_rolling_stream_and_studio_session_end_to_end(self) -> None:
+        session = StudioSession(seed=17)
+        telemetry = session.inject_demo_phrase(
+            key="吴语·侬好 (Wu Dialect)",
+            speaking_rate=1.25,
+            speaker_nuisance=0.35,
+        )
+        self.assertGreaterEqual(len(telemetry["active_matches"]), 1)
+        self.assertEqual(telemetry["active_matches"][0]["key"], "吴语·侬好 (Wu Dialect)")
+
+        enroll_res = session.enroll_dual_tempo(key="湘语·恰饭")
+        self.assertIn("湘语·恰饭", enroll_res["enrollment"]["all_keys"])
+
+        cli_buf = StringIO()
+        with contextlib.redirect_stdout(cli_buf):
+            main(["telemetry"])
+        cli_pkt = json.loads(cli_buf.getvalue())
+        self.assertIn("barcode", cli_pkt)
 
 
 if __name__ == "__main__":

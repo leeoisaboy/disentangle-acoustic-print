@@ -10,6 +10,7 @@ from .evidence import extract_evidence
 from .fingerprint import EnrollmentBank, OnlineMatcher, fingerprint
 from .geometry import decompose, disentanglement_report
 from .probing import layerwise_probe
+from .stream_engine import RollingAcousticStream
 from .synthetic import make_cross_voice_dataset, make_stream
 
 
@@ -79,6 +80,17 @@ def _decompose_demo(seed: int) -> dict[str, object]:
     }
 
 
+def _telemetry_demo(seed: int) -> dict[str, object]:
+    engine = RollingAcousticStream(max_frames=72, dimension=16, window_length=14)
+    engine.load_default_dialect_presets(seed=seed)
+    return engine.inject_synthetic_utterance(
+        key="吴语·侬好 (Wu Dialect)",
+        speaking_rate=1.25,
+        speaker_nuisance=0.4,
+        seed=seed,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="disentangle-acoustic-print")
     parser.add_argument("--seed", type=int, default=17)
@@ -89,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("evidence", help="extract structured temporal evidence")
     subparsers.add_parser("fingerprint", help="build and search a synthetic template bank")
     subparsers.add_parser("online", help="locate a synthetic event with sliding windows")
+    subparsers.add_parser("telemetry", help="emit a 4-track white-box oscilloscope telemetry packet")
     return parser
 
 
@@ -105,6 +118,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         output = extract_evidence(dataset["sequences"][0]).to_dict(include_boundary=True)
     elif args.command == "fingerprint":
         output = _bank_demo(args.seed)
+    elif args.command == "telemetry":
+        output = _telemetry_demo(args.seed)
     else:
         random = np.random.default_rng(args.seed)
         target = random.normal(size=8)

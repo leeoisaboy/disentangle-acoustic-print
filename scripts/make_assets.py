@@ -165,15 +165,15 @@ def title_banner(language: str) -> None:
     gradient_text(canvas, (80, 88), "Disentangle-Acoustic-Print", title_font)
 
     if language == "zh":
-        subtitle = "跨音色时序解耦与结构化声学指纹"
-        description = "把同一段冻结语音表征拆成静态、运动与证据视图"
-        chips = ("纯 NumPy", "免训练", "多尺度在线定位")
-        footer = "一只小狗，四条视图，一组能解释失败的对照实验"
+        subtitle = "跨音色时序解耦 · 四轨白盒声学工作台"
+        description = "把冻结语音轨迹拆成静态、运动与证据视图，并实时看见每一次解耦"
+        chips = ("纯 NumPy", "免训练", "四轨实时 Studio")
+        footer = "一只小狗，四条轨道，一组能解释失败的对照实验"
     else:
-        subtitle = "Cross-voice temporal disentanglement"
-        description = "Interpretable acoustic views from one frozen hidden-state trajectory"
-        chips = ("NumPy only", "No training", "Online localization")
-        footer = "One dog, four views, and a baseline built to explain failures"
+        subtitle = "Cross-voice disentanglement · 4-track white-box studio"
+        description = "Split a frozen speech trajectory into static, motion, and evidence views, live"
+        chips = ("NumPy only", "No training", "4-track live studio")
+        footer = "One dog, four tracks, and a baseline built to explain failures"
 
     subtitle_font = fit_font(FONT_CN if language == "zh" else FONT_UI, subtitle, 1040, 42, 30)
     draw.text((82, 225), subtitle, font=subtitle_font, fill=NAVY)

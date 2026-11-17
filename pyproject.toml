@@ -4,17 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "disentangle-acoustic-print"
-version = "0.1.0"
-description = "Cross-voice temporal disentanglement and structured acoustic fingerprints"
+version = "0.3.0"
+description = "Cross-voice temporal disentanglement, structured acoustic fingerprints, and 4-track white-box Acoustic Print Studio"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Disentangle-Acoustic-Print Contributors" }]
-keywords = ["speech", "speaker-disentanglement", "keyword-spotting", "numpy", "self-supervised"]
+keywords = ["speech", "speaker-disentanglement", "keyword-spotting", "numpy", "self-supervised", "acoustic-fingerprint", "interpretability"]
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pillow>=10"]
+studio = ["fastapi>=0.100", "uvicorn>=0.23", "python-multipart>=0.0.6"]
+spaces = ["gradio>=4.0"]
 
 [project.urls]
 Homepage = "https://github.com/leeoisaboy/disentangle-acoustic-print"
@@ -23,9 +25,13 @@ Issues = "https://github.com/leeoisaboy/disentangle-acoustic-print/issues"
 
 [project.scripts]
 disentangle-acoustic-print = "disentangle_acoustic_print.cli:main"
+acoustic-print-studio = "studio.app:main"
 
 [tool.setuptools]
-packages = ["disentangle_acoustic_print"]
+packages = ["disentangle_acoustic_print", "studio"]
+
+[tool.setuptools.package-data]
+studio = ["*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

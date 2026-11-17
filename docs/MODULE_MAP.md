@@ -1,15 +1,19 @@
 # Module Map
 
-The implementation consolidates the original exploration branches into four stable layers.
+The implementation consolidates the core geometric operators and the non-invasive **Acoustic Print Studio** interactive layer.
 
-| Public module | Consolidated concern | Original exploration focus |
+| Public module | Consolidated concern | Original / Studio focus |
 | --- | --- | --- |
 | `geometry.py` | Trajectory algebra, arc-length resampling, speaker projection, temporal controls, cross-voice consistency | `v82`, `v90`, `v90c` |
 | `probing.py` | Rank AUC, response calibration, variance attribution | `v82`, `v90c` |
 | `evidence.py` | CUSUM change point, separated peaks, evidence calibration | `v89`, `v90b`, `v91` |
 | `fingerprint.py` | Unit fingerprint, hybrid enrollment bank, multi-scale online locator with temporal NMS | `v89`, `v92`, `v93` |
-
-Only portable NumPy logic is included. Private manifests, audio assets, extractor scripts, credentials, and infrastructure code remain outside this repository.
+| `audio_bridge.py` | Sub-millisecond 16 kHz `MelDeltaExtractor`, `.wav` codec, and optional `HiddenStateBridge` | Acoustic Print Studio |
+| `telemetry.py` | 4-track white-box telemetry serializer (`build_telemetry_packet`) | Acoustic Print Studio |
+| `stream_engine.py` | `RollingAcousticStream` ring buffer, 3-second dual-tempo enrollment, live sliding-window matching | Acoustic Print Studio |
+| `studio/app.py` | Plan A FastAPI WebSocket + REST server and unified CLI launcher | Acoustic Print Studio |
+| `studio/gradio_app.py` | Plan B Gradio Streaming dashboard for Hugging Face Spaces | Acoustic Print Studio |
+| `studio/index.html` | Self-contained 60fps HTML5 Canvas 4-track white-box oscilloscope | Acoustic Print Studio |
 
 ## API Selection
 
@@ -22,3 +26,5 @@ Only portable NumPy logic is included. Private manifests, audio assets, extracto
 - Use `EvidenceCalibrator` when scalar evidence dimensions have different units or dynamic ranges.
 - Use `EnrollmentBank` for fixed-shape retrieval, with optional evidence fusion.
 - Use `OnlineMatcher` for multi-scale sliding-window localization with temporal NMS.
+- Use `MelDeltaExtractor` or `HiddenStateBridge` to convert raw 16 kHz audio or `.wav` bytes into `[time, dimension]` trajectories.
+- Use `RollingAcousticStream` and `build_telemetry_packet` to drive the 4-track white-box oscilloscope.
