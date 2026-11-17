@@ -19,6 +19,7 @@
     ];
 
     const CAPTURE_MODE = new URLSearchParams(window.location.search).get("capture") === "1";
+    const SCRUB_KEYS = ["wave", "kinematics", "tempo", "fingerprint"];
     const PALETTE = {
       ink: "#1d1d1f",
       inkSoft: "#424245",
@@ -437,6 +438,12 @@
         kinematics: { elapsed: 0, active: false, started: false },
         tempo: { elapsed: 0, active: false, started: false },
         fingerprint: { elapsed: 0, active: false, started: false }
+      },
+      scrubs: {
+        wave: { position: 0.0, touched: false },
+        kinematics: { position: 0.0, touched: false },
+        tempo: { position: 0.0, touched: false },
+        fingerprint: { position: 0.0, touched: false }
       }
     };
 
@@ -774,7 +781,10 @@
     function refreshDisplayTelemetry(restartSweeps = false) {
       const telemetry = computeFullTelemetry();
       studioState.displayTelemetry = telemetry;
-      if (restartSweeps) restartActiveSweeps();
+      if (restartSweeps) {
+        resetScrubs();
+        restartActiveSweeps();
+      }
       return telemetry;
     }
 
@@ -1115,6 +1125,51 @@
       }
     }
 
+    function isSweepReady(key) {
+      if (CAPTURE_MODE) return false;
+      const sweep = studioState.sweeps[key];
+      return Boolean(sweep && sweep.started && !sweep.active && sweep.elapsed >= studioState.sweepDurationMs);
+    }
+
+    function scrubPosition(key) {
+      if (!isSweepReady(key)) return null;
+      const scrub = studioState.scrubs[key];
+      return scrub && scrub.touched ? scrub.position : null;
+    }
+
+    function updateScrubberUI(key) {
+      const shell = document.querySelector(`[data-scrub-shell="${key}"]`);
+      if (!shell) return;
+      const input = shell.querySelector("[data-scrub-key]");
+      const readout = shell.querySelector(`[data-scrub-readout="${key}"]`);
+      const position = clamp01(studioState.scrubs[key].position);
+      if (input) {
+        input.value = String(Math.round(position * 1000));
+        input.style.setProperty("--scrub-fill", `${(position * 100).toFixed(2)}%`);
+        input.setAttribute("aria-valuetext", `${Math.round(position * 100)}%`);
+      }
+      if (readout) readout.textContent = `${Math.round(position * 100)}%`;
+    }
+
+    function resetScrubs() {
+      for (const key of SCRUB_KEYS) {
+        studioState.scrubs[key].position = 0.0;
+        studioState.scrubs[key].touched = false;
+        updateScrubberUI(key);
+      }
+    }
+
+    function syncScrubbers() {
+      for (const key of SCRUB_KEYS) {
+        const shell = document.querySelector(`[data-scrub-shell="${key}"]`);
+        if (!shell) continue;
+        const ready = isSweepReady(key);
+        if (shell.hidden === ready) shell.hidden = !ready;
+        const input = shell.querySelector("[data-scrub-key]");
+        if (input && input.disabled === ready) input.disabled = !ready;
+      }
+    }
+
     // Map normalized speed [0, 1] -> calm blue (steady) to warm coral (transition).
     function speedToColor(normSpeed, alpha = 1.0) {
       const s = Math.max(0.0, Math.min(1.0, normSpeed));
@@ -1145,6 +1200,30 @@
       ctx.beginPath();
       ctx.arc(x, y, 2.2, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    function drawInspectionGuide(ctx, x, top, bottom, color, pointY = null) {
+      if (x === null || x === undefined) return;
+      ctx.save();
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.20)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 5]);
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+
+      if (pointY !== null && pointY !== undefined) {
+        ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(251, 251, 253, 0.98)";
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x, pointY, 4.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
     }
 
     // Track 1: a frozen waveform revealed like a slowly writing ECG trace.
@@ -1256,6 +1335,13 @@
       if (progress > 0.002 && progress < 0.995) {
         const headY = midY - sampleSeries(wave, progress * (T - 1)) * (h * 0.36);
         drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
+      }
+
+      const inspect = scrubPosition("wave");
+      if (inspect !== null) {
+        const inspectX = x0 + (x1 - x0) * inspect;
+        const inspectY = midY - sampleSeries(wave, inspect * (T - 1)) * (h * 0.36);
+        drawInspectionGuide(ctx, inspectX, 8, h - 8, "rgba(0, 113, 227, 0.72)", inspectY);
       }
     }
 
@@ -1404,6 +1490,13 @@
         const headY = speedY(sampleSeries(speed, progress * (nSp - 1)));
         drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
       }
+
+      const inspect = scrubPosition("kinematics");
+      if (inspect !== null) {
+        const inspectX = padX + usableW * inspect;
+        const inspectY = speedY(sampleSeries(speed, inspect * (nSp - 1)));
+        drawInspectionGuide(ctx, inspectX, 4, h - 4, "rgba(0, 113, 227, 0.72)", inspectY);
+      }
     }
 
     // Track 3: a fixed tempo ruler painted progressively from left to right.
@@ -1488,6 +1581,12 @@
             : "标准语速，几何弧长均匀对齐";
         ctx.fillText(rateHint, Math.max(padX, w - ctx.measureText(rateHint).width - 10), 14);
         ctx.restore();
+      }
+
+      const inspect = scrubPosition("tempo");
+      if (inspect !== null) {
+        const inspectX = padX + usableW * inspect;
+        drawInspectionGuide(ctx, inspectX, yLinear - 8, yArc + 8, "rgba(43, 156, 148, 0.72)", yArc);
       }
     }
 
@@ -1578,6 +1677,12 @@
       ctx.fillText("模板指纹", 8, y2 + rowH * 0.62);
       ctx.fillStyle = PALETTE.faint;
       ctx.fillText("逐维共振", 8, y3 + matchH * 0.72);
+
+      const inspect = scrubPosition("fingerprint");
+      if (inspect !== null) {
+        const inspectX = padLeft + barW * inspect;
+        drawInspectionGuide(ctx, inspectX, y1 - 8, y3 + matchH + 8, "rgba(0, 113, 227, 0.64)");
+      }
 
       // Segment boundaries live in the slim color ticks above the ribbons.
       // Keeping the ribbons uninterrupted makes the fingerprint read as one texture.
@@ -1698,6 +1803,7 @@
         `;
       }).join("");
       document.getElementById("evidenceScalarGrid").innerHTML = scalarHtml;
+      syncScrubbers();
     }
 
     function refreshTemplateUI() {
@@ -1849,6 +1955,19 @@
     }
 
     function bindControls() {
+      document.querySelectorAll("[data-scrub-key]").forEach((input) => {
+        input.addEventListener("input", (event) => {
+          const key = event.currentTarget.dataset.scrubKey;
+          const scrub = studioState.scrubs[key];
+          if (!scrub) return;
+          const max = Number(event.currentTarget.max) || 1000;
+          scrub.position = clamp01(Number(event.currentTarget.value) / max);
+          scrub.touched = true;
+          updateScrubberUI(key);
+          if (studioState.displayTelemetry) renderAllUI(studioState.displayTelemetry);
+        });
+      });
+
       document.getElementById("btnTogglePlay").addEventListener("click", () => {
         studioState.isPlaying = !studioState.isPlaying;
         document.getElementById("playIcon").textContent = studioState.isPlaying ? "Ⅱ" : "▶";

@@ -1673,6 +1673,108 @@ input[type="range"]::-moz-range-thumb {
   margin: 0;
 }
 
+.stage-scrub {
+  width: min(1100px, 100%);
+  margin: 20px auto 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--faint);
+}
+
+.stage-scrub[hidden] {
+  display: none;
+}
+
+.stage-scrub__label,
+.stage-scrub__value {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.015em;
+  white-space: nowrap;
+}
+
+.stage-scrub__value {
+  min-width: 38px;
+  text-align: right;
+  color: var(--muted);
+}
+
+.scrubber {
+  --scrub-fill: 0%;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  box-shadow: none;
+  cursor: ew-resize;
+}
+
+.scrubber:focus,
+.scrubber:focus-visible {
+  outline: none;
+}
+
+.scrubber::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    rgba(0, 113, 227, 0.70) 0 var(--scrub-fill),
+    rgba(29, 29, 31, 0.10) var(--scrub-fill) 100%
+  );
+}
+
+.scrubber::-webkit-slider-thumb {
+  width: 10px;
+  height: 10px;
+  margin-top: -4px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 0 5px rgba(0, 113, 227, 0.09);
+  transition: box-shadow 180ms ease, transform 180ms ease;
+  -webkit-appearance: none;
+}
+
+.scrubber:hover::-webkit-slider-thumb,
+.scrubber:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 8px rgba(0, 113, 227, 0.12);
+}
+
+.scrubber::-moz-range-track {
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(29, 29, 31, 0.10);
+}
+
+.scrubber::-moz-range-progress {
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(0, 113, 227, 0.70);
+}
+
+.scrubber::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 0 0 5px rgba(0, 113, 227, 0.09);
+}
+
+.capture-mode .stage-scrub {
+  display: none !important;
+}
+
 .compare-line {
   display: flex;
   align-items: center;
