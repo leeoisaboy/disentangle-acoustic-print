@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&amp;family=Noto+Sans+SC:wght@400..700&amp;family=Roboto+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230071e3'/%3E%3Cpath d='M4 12h3l2-5 3 10 2.5-7 1.5 4H20' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="static/studio.css?v=scrub-20261117" />
+  <link rel="stylesheet" href="static/studio.css?v=pan-20261117" />
 </head>
 <body>
   <header class="topbar">
@@ -203,8 +203,8 @@
       </div>
       <div class="stage stage--wave"><canvas id="canvasTrack1"></canvas></div>
       <div class="stage-scrub" data-scrub-shell="wave" hidden>
-        <span class="stage-scrub__label">拖动查看</span>
-        <input id="scrubWave" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="wave" aria-label="查看波形时间位置" />
+        <span class="stage-scrub__label">拖动平移</span>
+        <input id="scrubWave" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="wave" aria-label="横向平移完整波形图表" />
         <span class="stage-scrub__value" data-scrub-readout="wave">0%</span>
       </div>
       <div class="stage-foot">
@@ -230,8 +230,8 @@
       </div>
       <div class="stage stage--curve"><canvas id="canvasTrack2"></canvas></div>
       <div class="stage-scrub" data-scrub-shell="kinematics" hidden>
-        <span class="stage-scrub__label">拖动查看</span>
-        <input id="scrubKinematics" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="kinematics" aria-label="查看速度曲线时间位置" />
+        <span class="stage-scrub__label">拖动平移</span>
+        <input id="scrubKinematics" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="kinematics" aria-label="横向平移完整速度曲线图表" />
         <span class="stage-scrub__value" data-scrub-readout="kinematics">0%</span>
       </div>
       <div class="stage-foot">
@@ -270,8 +270,8 @@
         </div>
       </div>
       <div class="stage-scrub" data-scrub-shell="tempo" hidden>
-        <span class="stage-scrub__label">拖动查看</span>
-        <input id="scrubTempo" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="tempo" aria-label="查看等弧长刻度位置" />
+        <span class="stage-scrub__label">拖动平移</span>
+        <input id="scrubTempo" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="tempo" aria-label="横向平移完整等弧长刻度图表" />
         <span class="stage-scrub__value" data-scrub-readout="tempo">0%</span>
       </div>
       <div class="stage-foot">
@@ -296,8 +296,8 @@
       </div>
       <div class="stage stage--barcode"><canvas id="canvasTrack4"></canvas></div>
       <div class="stage-scrub" data-scrub-shell="fingerprint" hidden>
-        <span class="stage-scrub__label">拖动查看</span>
-        <input id="scrubFingerprint" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="fingerprint" aria-label="查看指纹维度位置" />
+        <span class="stage-scrub__label">拖动平移</span>
+        <input id="scrubFingerprint" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="fingerprint" aria-label="横向平移完整指纹图表" />
         <span class="stage-scrub__value" data-scrub-readout="fingerprint">0%</span>
       </div>
       <div id="barcodeSegmentPills" class="segment-row"></div>
@@ -326,6 +326,6 @@
     <span id="studioToastText">系统就绪</span>
   </div>
 
-  <script src="static/studio.js?v=scrub-20261117" defer></script>
+  <script src="static/studio.js?v=pan-20261117" defer></script>
 </body>
 </html>

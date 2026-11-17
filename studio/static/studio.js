@@ -19,7 +19,19 @@
     ];
 
     const CAPTURE_MODE = new URLSearchParams(window.location.search).get("capture") === "1";
+    const SWEEP_PARAM = Number(new URLSearchParams(window.location.search).get("sweep"));
+    const SWEEP_DURATION_MS = Number.isFinite(SWEEP_PARAM) && SWEEP_PARAM > 0
+      ? Math.max(800, Math.min(12000, SWEEP_PARAM))
+      : 6200;
     const SCRUB_KEYS = ["wave", "kinematics", "tempo", "fingerprint"];
+    const SCRUB_CANVASES = {
+      wave: "canvasTrack1",
+      kinematics: "canvasTrack2",
+      tempo: "canvasTrack3",
+      fingerprint: "canvasTrack4"
+    };
+    const PAN_SEGMENTS = 2;
+    const PAN_SHIFT_PERCENT = ((PAN_SEGMENTS - 1) / PAN_SEGMENTS) * 100;
     const PALETTE = {
       ink: "#1d1d1f",
       inkSoft: "#424245",
@@ -432,7 +444,7 @@
       lastTelemetry: null,
       smoothedTelemetry: null,
       displayTelemetry: null,
-      sweepDurationMs: 6200,
+      sweepDurationMs: SWEEP_DURATION_MS,
       sweeps: {
         wave: { elapsed: 0, active: false, started: false },
         kinematics: { elapsed: 0, active: false, started: false },
@@ -440,10 +452,10 @@
         fingerprint: { elapsed: 0, active: false, started: false }
       },
       scrubs: {
-        wave: { position: 0.0, touched: false },
-        kinematics: { position: 0.0, touched: false },
-        tempo: { position: 0.0, touched: false },
-        fingerprint: { position: 0.0, touched: false }
+        wave: { position: 0.0 },
+        kinematics: { position: 0.0 },
+        tempo: { position: 0.0 },
+        fingerprint: { position: 0.0 }
       }
     };
 
@@ -715,9 +727,10 @@
     }
 
     // Build full white-box telemetry snapshot for the 4 tracks
-    function computeFullTelemetry() {
+    function computeFullTelemetry(rawFrames = null, waveform = null, record = true) {
       const t0 = performance.now();
-      const raw = studioState.rawFrames;
+      const raw = rawFrames || studioState.rawFrames;
+      const waveSource = waveform || studioState.waveform;
       const T = raw.length;
       const projInfo = projectSpeakerSubspace(raw);
       const working = projInfo.projected;
@@ -756,12 +769,10 @@
       const barcode = computeFingerprintWithSegments(focusSlice.length >= 4 ? focusSlice : working, STUDIO_CONFIG.outputLength);
 
       const elapsed = performance.now() - t0;
-      studioState.lastComputeMs = 0.12 + 0.88 * Math.min(elapsed, 0.95);
-
       const telemetry = {
         frameCount: T,
         dimension: STUDIO_CONFIG.dimension,
-        waveform: Float64Array.from(studioState.waveform),
+        waveform: Float64Array.from(waveSource),
         frameSpeed,
         frameSpeedNorm,
         activeMatches,
@@ -773,13 +784,55 @@
         projInfo,
         barcode
       };
-      studioState.lastTelemetry = telemetry;
+      if (record) {
+        studioState.lastComputeMs = 0.12 + 0.88 * Math.min(elapsed, 0.95);
+        studioState.lastTelemetry = telemetry;
+      }
       return telemetry;
+    }
+
+    function buildContinuationSequence() {
+      const keys = Array.from(studioState.templates.keys());
+      if (keys.length === 0) return null;
+      const currentIndex = Math.max(0, keys.indexOf(studioState.selectedTemplateKey));
+      const key = keys[(currentIndex + 1) % keys.length];
+      const seed = 523 + currentIndex * 71;
+      const { frames, wave } = generatePhraseTrajectory(
+        key,
+        STUDIO_CONFIG.baseWindowLength,
+        studioState.speakingRate,
+        studioState.speakerNuisance,
+        seed
+      );
+      const D = STUDIO_CONFIG.dimension;
+      const rng = createRng(seed + 19);
+      const paddedFrames = [];
+      const paddedWave = new Float64Array(frames.length + 10);
+      const pushQuiet = (slot) => {
+        const quiet = new Float64Array(D);
+        for (let d = 0; d < D; d++) quiet[d] = 0.014 * rng.nextGaussian();
+        paddedFrames.push(quiet);
+        paddedWave[slot] = 0.010 * rng.nextGaussian();
+      };
+      for (let i = 0; i < 4; i++) pushQuiet(i);
+      for (let i = 0; i < frames.length; i++) {
+        paddedFrames.push(frames[i]);
+        paddedWave[4 + i] = wave[i];
+      }
+      for (let i = 0; i < 6; i++) pushQuiet(4 + frames.length + i);
+      return { key, frames: paddedFrames, wave: paddedWave };
     }
 
     // Presentation frames read one frozen snapshot. Only the reveal boundary moves.
     function refreshDisplayTelemetry(restartSweeps = false) {
       const telemetry = computeFullTelemetry();
+      const continuation = buildContinuationSequence();
+      if (continuation) {
+        const nextTelemetry = computeFullTelemetry(continuation.frames, continuation.wave, false);
+        nextTelemetry.continuationKey = continuation.key;
+        telemetry.continuation = nextTelemetry;
+        telemetry.continuationKey = continuation.key;
+      }
       studioState.displayTelemetry = telemetry;
       if (restartSweeps) {
         resetScrubs();
@@ -1131,18 +1184,17 @@
       return Boolean(sweep && sweep.started && !sweep.active && sweep.elapsed >= studioState.sweepDurationMs);
     }
 
-    function scrubPosition(key) {
-      if (!isSweepReady(key)) return null;
-      const scrub = studioState.scrubs[key];
-      return scrub && scrub.touched ? scrub.position : null;
-    }
-
     function updateScrubberUI(key) {
       const shell = document.querySelector(`[data-scrub-shell="${key}"]`);
       if (!shell) return;
       const input = shell.querySelector("[data-scrub-key]");
       const readout = shell.querySelector(`[data-scrub-readout="${key}"]`);
       const position = clamp01(studioState.scrubs[key].position);
+      const canvas = document.getElementById(SCRUB_CANVASES[key]);
+      if (canvas) {
+        const shift = position * PAN_SHIFT_PERCENT;
+        canvas.style.transform = `translate3d(${(-shift).toFixed(3)}%, 0, 0)`;
+      }
       if (input) {
         input.value = String(Math.round(position * 1000));
         input.style.setProperty("--scrub-fill", `${(position * 100).toFixed(2)}%`);
@@ -1154,7 +1206,6 @@
     function resetScrubs() {
       for (const key of SCRUB_KEYS) {
         studioState.scrubs[key].position = 0.0;
-        studioState.scrubs[key].touched = false;
         updateScrubberUI(key);
       }
     }
@@ -1202,30 +1253,6 @@
       ctx.fill();
     }
 
-    function drawInspectionGuide(ctx, x, top, bottom, color, pointY = null) {
-      if (x === null || x === undefined) return;
-      ctx.save();
-      ctx.strokeStyle = "rgba(29, 29, 31, 0.20)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 5]);
-      ctx.beginPath();
-      ctx.moveTo(x, top);
-      ctx.lineTo(x, bottom);
-      ctx.stroke();
-
-      if (pointY !== null && pointY !== undefined) {
-        ctx.setLineDash([]);
-        ctx.fillStyle = "rgba(251, 251, 253, 0.98)";
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(x, pointY, 4.2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
     // Track 1: a frozen waveform revealed like a slowly writing ECG trace.
     function drawTrack1(telemetry) {
       const env = prepareCanvas("canvasTrack1");
@@ -1233,115 +1260,124 @@
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      const T = telemetry.frameCount;
-      if (T < 2) return;
-      const progress = sectionProgress("wave");
-      const wave = smoothSeries(telemetry.waveform, 2);
-      const speedNorm = smoothSeries(telemetry.frameSpeedNorm, 2);
+      const frameW = w / PAN_SEGMENTS;
       const midY = h * 0.54;
       const x0 = 10;
-      const x1 = w - 10;
-      const xAt = (t) => x0 + ((x1 - x0) * t) / Math.max(T - 1, 1);
-      const revealX = x0 + (x1 - x0) * progress;
-      const points = buildSmoothPoints(wave, x0, x1, (value) => midY - value * (h * 0.36));
+      const x1 = frameW - 10;
 
-      ctx.strokeStyle = "rgba(29, 29, 31, 0.07)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(8, midY);
-      ctx.lineTo(w - 8, midY);
-      ctx.stroke();
+      for (let seg = 0; seg < PAN_SEGMENTS; seg++) {
+        const view = seg === 0 ? telemetry : (telemetry.continuation || telemetry);
+        const T = view.frameCount;
+        if (T < 2) continue;
+        const progress = sectionProgress("wave");
+        const wave = smoothSeries(view.waveform, 2);
+        const speedNorm = smoothSeries(view.frameSpeedNorm, 2);
+        const xAt = (t) => x0 + ((x1 - x0) * t) / Math.max(T - 1, 1);
+        const revealX = x0 + (x1 - x0) * progress;
+        const points = buildSmoothPoints(wave, x0, x1, (value) => midY - value * (h * 0.36));
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, Math.max(0, revealX), h);
-      ctx.clip();
+        ctx.save();
+        ctx.translate(seg * frameW, 0);
 
-      for (let idx = telemetry.activeMatches.length - 1; idx >= 0; idx--) {
-        const match = telemetry.activeMatches[idx];
-        const bandX1 = xAt(match.start);
-        const bandX2 = xAt(Math.min(match.end, T - 1));
-        const width = Math.max(18, bandX2 - bandX1);
-        const isTop = idx === 0;
-        const alpha = isTop ? 0.10 : 0.045;
-        const color = isTop ? "0, 113, 227" : "123, 107, 176";
-        const band = ctx.createLinearGradient(bandX1, 0, bandX1 + width, 0);
-        band.addColorStop(0, `rgba(${color}, 0)`);
-        band.addColorStop(0.18, `rgba(${color}, ${alpha})`);
-        band.addColorStop(0.82, `rgba(${color}, ${alpha})`);
-        band.addColorStop(1, `rgba(${color}, 0)`);
-        ctx.fillStyle = band;
-        ctx.fillRect(bandX1, 0, width, h);
-      }
+        ctx.strokeStyle = "rgba(29, 29, 31, 0.07)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(8, midY);
+        ctx.lineTo(frameW - 8, midY);
+        ctx.stroke();
 
-      const cusumX = xAt(telemetry.streamEv.cusum.changeIndex);
-      ctx.save();
-      ctx.strokeStyle = "rgba(230, 106, 78, 0.36)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 6]);
-      ctx.beginPath();
-      ctx.moveTo(cusumX, 10);
-      ctx.lineTo(cusumX, h - 10);
-      ctx.stroke();
-      ctx.restore();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, Math.max(0, revealX), h);
+        ctx.clip();
 
-      const area = ctx.createLinearGradient(0, midY - h * 0.34, 0, midY + h * 0.34);
-      area.addColorStop(0, "rgba(0, 113, 227, 0.12)");
-      area.addColorStop(0.52, "rgba(0, 113, 227, 0.045)");
-      area.addColorStop(1, "rgba(0, 113, 227, 0)");
-      ctx.fillStyle = area;
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, midY);
-      ctx.lineTo(points[0].x, points[0].y);
-      appendSmoothCurve(ctx, points);
-      ctx.lineTo(points[points.length - 1].x, midY);
-      ctx.closePath();
-      ctx.fill();
+        for (let idx = view.activeMatches.length - 1; idx >= 0; idx--) {
+          const match = view.activeMatches[idx];
+          const bandX1 = xAt(match.start);
+          const bandX2 = xAt(Math.min(match.end, T - 1));
+          const width = Math.max(18, bandX2 - bandX1);
+          const isTop = idx === 0;
+          const alpha = isTop ? 0.10 : 0.045;
+          const color = isTop ? "0, 113, 227" : "123, 107, 176";
+          const band = ctx.createLinearGradient(bandX1, 0, bandX1 + width, 0);
+          band.addColorStop(0, `rgba(${color}, 0)`);
+          band.addColorStop(0.18, `rgba(${color}, ${alpha})`);
+          band.addColorStop(0.82, `rgba(${color}, ${alpha})`);
+          band.addColorStop(1, `rgba(${color}, 0)`);
+          ctx.fillStyle = band;
+          ctx.fillRect(bandX1, 0, width, h);
+        }
 
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = "rgba(0, 113, 227, 0.13)";
-      ctx.lineWidth = 7;
-      traceSmoothPath(ctx, points);
-      ctx.stroke();
+        const cusumX = xAt(view.streamEv.cusum.changeIndex);
+        ctx.save();
+        ctx.strokeStyle = "rgba(230, 106, 78, 0.36)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 6]);
+        ctx.beginPath();
+        ctx.moveTo(cusumX, 10);
+        ctx.lineTo(cusumX, h - 10);
+        ctx.stroke();
+        ctx.restore();
 
-      const strokeGradient = ctx.createLinearGradient(x0, 0, x1, 0);
-      for (let stop = 0; stop <= 12; stop++) {
-        const ratio = stop / 12;
-        const sampleIndex = Math.round(ratio * (T - 1));
-        strokeGradient.addColorStop(ratio, speedToColor(speedNorm[sampleIndex], 0.90));
-      }
-      ctx.strokeStyle = strokeGradient;
-      ctx.lineWidth = 1.8;
-      traceSmoothPath(ctx, points);
-      ctx.stroke();
-      ctx.restore();
+        const area = ctx.createLinearGradient(0, midY - h * 0.34, 0, midY + h * 0.34);
+        area.addColorStop(0, "rgba(0, 113, 227, 0.12)");
+        area.addColorStop(0.52, "rgba(0, 113, 227, 0.045)");
+        area.addColorStop(1, "rgba(0, 113, 227, 0)");
+        ctx.fillStyle = area;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, midY);
+        ctx.lineTo(points[0].x, points[0].y);
+        appendSmoothCurve(ctx, points);
+        ctx.lineTo(points[points.length - 1].x, midY);
+        ctx.closePath();
+        ctx.fill();
 
-      const topMatch = telemetry.activeMatches[0];
-      if (topMatch) {
-        const labelX = xAt(topMatch.start);
-        const alpha = clamp01((revealX - labelX) / 72);
-        if (alpha > 0) {
-          const label = `${topMatch.key} · ${topMatch.score.toFixed(2)}`;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = "rgba(0, 113, 227, 0.13)";
+        ctx.lineWidth = 7;
+        traceSmoothPath(ctx, points);
+        ctx.stroke();
+
+        const strokeGradient = ctx.createLinearGradient(x0, 0, x1, 0);
+        for (let stop = 0; stop <= 12; stop++) {
+          const ratio = stop / 12;
+          const sampleIndex = Math.round(ratio * (T - 1));
+          strokeGradient.addColorStop(ratio, speedToColor(speedNorm[sampleIndex], 0.90));
+        }
+        ctx.strokeStyle = strokeGradient;
+        ctx.lineWidth = 1.8;
+        traceSmoothPath(ctx, points);
+        ctx.stroke();
+        ctx.restore();
+
+        const topMatch = view.activeMatches[0];
+        if (seg === 0 && topMatch) {
+          const labelX = xAt(topMatch.start);
+          const alpha = clamp01((revealX - labelX) / 72);
+          if (alpha > 0) {
+            const label = `${topMatch.key} · ${topMatch.score.toFixed(2)}`;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.font = `550 10px ${CANVAS_MONO}`;
+            ctx.fillStyle = "rgba(0, 88, 178, 0.78)";
+            ctx.fillText(label, Math.min(frameW - 190, Math.max(10, labelX)), 20);
+            ctx.restore();
+          }
+        } else if (seg > 0) {
           ctx.save();
-          ctx.globalAlpha = alpha;
           ctx.font = `550 10px ${CANVAS_MONO}`;
-          ctx.fillStyle = "rgba(0, 88, 178, 0.78)";
-          ctx.fillText(label, Math.min(w - 190, Math.max(10, labelX)), 20);
+          ctx.fillStyle = "rgba(134, 134, 139, 0.62)";
+          ctx.fillText(`下一段 · ${view.continuationKey || "后续语音"}`, 10, 20);
           ctx.restore();
         }
-      }
 
-      if (progress > 0.002 && progress < 0.995) {
-        const headY = midY - sampleSeries(wave, progress * (T - 1)) * (h * 0.36);
-        drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
-      }
+        if (progress > 0.002 && progress < 0.995) {
+          const headY = midY - sampleSeries(wave, progress * (T - 1)) * (h * 0.36);
+          drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
+        }
 
-      const inspect = scrubPosition("wave");
-      if (inspect !== null) {
-        const inspectX = x0 + (x1 - x0) * inspect;
-        const inspectY = midY - sampleSeries(wave, inspect * (T - 1)) * (h * 0.36);
-        drawInspectionGuide(ctx, inspectX, 8, h - 8, "rgba(0, 113, 227, 0.72)", inspectY);
+        ctx.restore();
       }
     }
 
@@ -1352,150 +1388,158 @@
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      const speed = smoothSeries(telemetry.decomp.speed, 3);
-      const turning = smoothSeries(telemetry.decomp.turning, 3);
-      const cusumCurve = smoothSeries(telemetry.streamEv.cusum.curve, 3);
-      const cusumIdx = telemetry.streamEv.cusum.changeIndex;
-      const peaks = telemetry.streamEv.peaks;
-      const nSp = speed.length;
-      if (nSp < 2) return;
-
       const progress = sectionProgress("kinematics");
+      const frameW = w / PAN_SEGMENTS;
       const padX = 8;
-      const usableW = Math.max(20, w - 16);
-      const xAt = (index) => padX + (usableW * index) / Math.max(nSp - 1, 1);
-      const revealX = padX + usableW * progress;
-      const speedY = (value) => h - 12 - (value / maxSp) * (h - 28);
-      const cusumY = (value) => h - 12 - (0.5 + 0.45 * (value / maxCusum)) * (h - 24);
-      const turningY = (value) => h - 14 - ((value + 1.0) * 0.5) * (h - 32);
+      const usableW = Math.max(20, frameW - 16);
 
-      let maxSp = EPSILON;
-      for (let i = 0; i < nSp; i++) if (speed[i] > maxSp) maxSp = speed[i];
-      let maxCusum = EPSILON;
-      for (let i = 0; i < cusumCurve.length; i++) {
-        if (Math.abs(cusumCurve[i]) > maxCusum) maxCusum = Math.abs(cusumCurve[i]);
-      }
+      for (let seg = 0; seg < PAN_SEGMENTS; seg++) {
+        const view = seg === 0 ? telemetry : (telemetry.continuation || telemetry);
+        const speed = smoothSeries(view.decomp.speed, 3);
+        const turning = smoothSeries(view.decomp.turning, 3);
+        const cusumCurve = smoothSeries(view.streamEv.cusum.curve, 3);
+        const cusumIdx = view.streamEv.cusum.changeIndex;
+        const peaks = view.streamEv.peaks;
+        const nSp = speed.length;
+        if (nSp < 2) continue;
 
-      const speedPoints = buildSmoothPoints(speed, padX, w - padX, speedY);
-      const cusumPoints = buildSmoothPoints(cusumCurve, padX, w - padX, cusumY);
-      const turningPoints = buildSmoothPoints(turning, padX, w - padX, turningY);
+        let maxSp = EPSILON;
+        for (let i = 0; i < nSp; i++) if (speed[i] > maxSp) maxSp = speed[i];
+        let maxCusum = EPSILON;
+        for (let i = 0; i < cusumCurve.length; i++) {
+          if (Math.abs(cusumCurve[i]) > maxCusum) maxCusum = Math.abs(cusumCurve[i]);
+        }
 
-      ctx.strokeStyle = "rgba(29, 29, 31, 0.055)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(padX, h - 12);
-      ctx.lineTo(w - padX, h - 12);
-      ctx.stroke();
+        const xAt = (index) => padX + (usableW * index) / Math.max(nSp - 1, 1);
+        const revealX = padX + usableW * progress;
+        const speedY = (value) => h - 12 - (value / maxSp) * (h - 28);
+        const cusumY = (value) => h - 12 - (0.5 + 0.45 * (value / maxCusum)) * (h - 24);
+        const turningY = (value) => h - 14 - ((value + 1.0) * 0.5) * (h - 32);
+        const speedPoints = buildSmoothPoints(speed, padX, frameW - padX, speedY);
+        const cusumPoints = buildSmoothPoints(cusumCurve, padX, frameW - padX, cusumY);
+        const turningPoints = buildSmoothPoints(turning, padX, frameW - padX, turningY);
+        const peakColors = [PALETTE.blue, PALETTE.teal];
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, Math.max(0, revealX), h);
-      ctx.clip();
-
-      ctx.save();
-      ctx.strokeStyle = "rgba(123, 107, 176, 0.20)";
-      ctx.lineWidth = 1.0;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      traceSmoothPath(ctx, turningPoints);
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.strokeStyle = "rgba(230, 106, 78, 0.56)";
-      ctx.lineWidth = 1.25;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      traceSmoothPath(ctx, cusumPoints);
-      ctx.stroke();
-      ctx.restore();
-
-      const grad = ctx.createLinearGradient(0, 10, 0, h);
-      grad.addColorStop(0, "rgba(0, 113, 227, 0.13)");
-      grad.addColorStop(1, "rgba(0, 113, 227, 0.0)");
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(speedPoints[0].x, h - 12);
-      ctx.lineTo(speedPoints[0].x, speedPoints[0].y);
-      appendSmoothCurve(ctx, speedPoints);
-      ctx.lineTo(speedPoints[speedPoints.length - 1].x, h - 12);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.strokeStyle = "rgba(0, 113, 227, 0.12)";
-      ctx.lineWidth = 7;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      traceSmoothPath(ctx, speedPoints);
-      ctx.stroke();
-
-      const speedGradient = ctx.createLinearGradient(padX, 0, w - padX, 0);
-      for (let stop = 0; stop <= 12; stop++) {
-        const ratio = stop / 12;
-        const sampleIndex = Math.round(ratio * (nSp - 1));
-        speedGradient.addColorStop(ratio, speedToColor(clamp01(speed[sampleIndex] / maxSp), 0.94));
-      }
-      ctx.strokeStyle = speedGradient;
-      ctx.lineWidth = 1.8;
-      traceSmoothPath(ctx, speedPoints);
-      ctx.stroke();
-      ctx.restore();
-
-      const laserX = xAt(cusumIdx);
-      const laserAlpha = clamp01((revealX - laserX) / 58);
-      if (laserAlpha > 0) {
         ctx.save();
-        ctx.globalAlpha = laserAlpha;
-        ctx.strokeStyle = PALETTE.coral;
-        ctx.lineWidth = 1.1;
-        ctx.setLineDash([3, 5]);
+        ctx.translate(seg * frameW, 0);
+
+        ctx.strokeStyle = "rgba(29, 29, 31, 0.055)";
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(laserX, 4);
-        ctx.lineTo(laserX, h - 4);
+        ctx.moveTo(padX, h - 12);
+        ctx.lineTo(frameW - padX, h - 12);
+        ctx.stroke();
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(0, 0, Math.max(0, revealX), h);
+        ctx.clip();
+
+        ctx.save();
+        ctx.strokeStyle = "rgba(123, 107, 176, 0.20)";
+        ctx.lineWidth = 1.0;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        traceSmoothPath(ctx, turningPoints);
         ctx.stroke();
         ctx.restore();
-      }
 
-      const labelAlpha = clamp01((progress - 0.58) / 0.22);
-      if (labelAlpha > 0) {
         ctx.save();
-        ctx.globalAlpha = labelAlpha;
-        ctx.fillStyle = PALETTE.coral;
-        ctx.font = `600 10px ${CANVAS_MONO}`;
-        ctx.fillText(`CUSUM 变点 ${(cusumIdx / Math.max(nSp - 1, 1)).toFixed(2)}`, 8, 14);
+        ctx.strokeStyle = "rgba(230, 106, 78, 0.56)";
+        ctx.lineWidth = 1.25;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        traceSmoothPath(ctx, cusumPoints);
+        ctx.stroke();
         ctx.restore();
-      }
 
-      const peakColors = [PALETTE.blue, PALETTE.teal];
-      for (let p = 0; p < Math.min(2, peaks.length); p++) {
-        const idx = peaks[p];
-        const px = xAt(idx);
-        const alpha = clamp01((revealX - px) / 48);
-        if (alpha <= 0) continue;
-        const py = speedY(speed[idx]);
-        const radius = p === 0 ? 4.6 : 3.8;
-
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = peakColors[p];
+        const grad = ctx.createLinearGradient(0, 10, 0, h);
+        grad.addColorStop(0, "rgba(0, 113, 227, 0.13)");
+        grad.addColorStop(1, "rgba(0, 113, 227, 0.0)");
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.moveTo(speedPoints[0].x, h - 12);
+        ctx.lineTo(speedPoints[0].x, speedPoints[0].y);
+        appendSmoothCurve(ctx, speedPoints);
+        ctx.lineTo(speedPoints[speedPoints.length - 1].x, h - 12);
+        ctx.closePath();
         ctx.fill();
-        ctx.font = `650 9px ${CANVAS_MONO}`;
-        ctx.fillText(p === 0 ? "P1" : "P2", Math.max(6, px - 7), Math.max(11, py - 8));
+
+        ctx.strokeStyle = "rgba(0, 113, 227, 0.12)";
+        ctx.lineWidth = 7;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        traceSmoothPath(ctx, speedPoints);
+        ctx.stroke();
+
+        const speedGradient = ctx.createLinearGradient(padX, 0, frameW - padX, 0);
+        for (let stop = 0; stop <= 12; stop++) {
+          const ratio = stop / 12;
+          const sampleIndex = Math.round(ratio * (nSp - 1));
+          speedGradient.addColorStop(ratio, speedToColor(clamp01(speed[sampleIndex] / maxSp), 0.94));
+        }
+        ctx.strokeStyle = speedGradient;
+        ctx.lineWidth = 1.8;
+        traceSmoothPath(ctx, speedPoints);
+        ctx.stroke();
         ctx.restore();
-      }
 
-      if (progress > 0.002 && progress < 0.995) {
-        const headY = speedY(sampleSeries(speed, progress * (nSp - 1)));
-        drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
-      }
+        const laserX = xAt(cusumIdx);
+        const laserAlpha = clamp01((revealX - laserX) / 58);
+        if (laserAlpha > 0) {
+          ctx.save();
+          ctx.globalAlpha = laserAlpha;
+          ctx.strokeStyle = PALETTE.coral;
+          ctx.lineWidth = 1.1;
+          ctx.setLineDash([3, 5]);
+          ctx.beginPath();
+          ctx.moveTo(laserX, 4);
+          ctx.lineTo(laserX, h - 4);
+          ctx.stroke();
+          ctx.restore();
+        }
 
-      const inspect = scrubPosition("kinematics");
-      if (inspect !== null) {
-        const inspectX = padX + usableW * inspect;
-        const inspectY = speedY(sampleSeries(speed, inspect * (nSp - 1)));
-        drawInspectionGuide(ctx, inspectX, 4, h - 4, "rgba(0, 113, 227, 0.72)", inspectY);
+        const labelAlpha = clamp01((progress - 0.58) / 0.22);
+        if (seg === 0 && labelAlpha > 0) {
+          ctx.save();
+          ctx.globalAlpha = labelAlpha;
+          ctx.fillStyle = PALETTE.coral;
+          ctx.font = `600 10px ${CANVAS_MONO}`;
+          ctx.fillText(`CUSUM 变点 ${(cusumIdx / Math.max(nSp - 1, 1)).toFixed(2)}`, 8, 14);
+          ctx.restore();
+        } else if (seg > 0) {
+          ctx.save();
+          ctx.fillStyle = "rgba(134, 134, 139, 0.62)";
+          ctx.font = `600 10px ${CANVAS_MONO}`;
+          ctx.fillText(`下一段 · ${view.continuationKey || "后续语音"}`, 8, 14);
+          ctx.restore();
+        }
+
+        for (let p = 0; p < Math.min(2, peaks.length); p++) {
+          const idx = peaks[p];
+          const px = xAt(idx);
+          const alpha = clamp01((revealX - px) / 48);
+          if (alpha <= 0) continue;
+          const py = speedY(speed[idx]);
+          const radius = p === 0 ? 4.6 : 3.8;
+
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = peakColors[p];
+          ctx.beginPath();
+          ctx.arc(px, py, radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.font = `650 9px ${CANVAS_MONO}`;
+          ctx.fillText(p === 0 ? "P1" : "P2", Math.max(6, px - 7), Math.max(11, py - 8));
+          ctx.restore();
+        }
+
+        if (progress > 0.002 && progress < 0.995) {
+          const headY = speedY(sampleSeries(speed, progress * (nSp - 1)));
+          drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
+        }
+
+        ctx.restore();
       }
     }
 
@@ -1506,87 +1550,98 @@
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      const { linearPositions, arcPositions } = telemetry.arcRuler;
-      const nTicks = linearPositions.length;
-      if (nTicks < 2) return;
-      const maxPos = Math.max(linearPositions[nTicks - 1], EPSILON);
       const progress = sectionProgress("tempo");
 
+      const frameW = w / PAN_SEGMENTS;
       const padX = 52;
-      const usableW = Math.max(40, w - padX * 2);
+      const usableW = Math.max(40, frameW - padX * 2);
       const revealX = padX + usableW * progress;
       const yLinear = 28;
       const yArc = h - 26;
 
-      ctx.font = `600 10px ${CANVAS_MONO}`;
-      ctx.fillStyle = PALETTE.faint;
-      ctx.fillText("Linear", 8, yLinear + 4);
-      ctx.fillStyle = PALETTE.teal;
-      ctx.fillText("ArcLen", 8, yArc + 4);
+      const hintAlpha = clamp01((progress - 0.68) / 0.24);
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(padX, 0, Math.max(0, revealX - padX), h);
-      ctx.clip();
+      for (let seg = 0; seg < PAN_SEGMENTS; seg++) {
+        const view = seg === 0 ? telemetry : (telemetry.continuation || telemetry);
+        const { linearPositions, arcPositions } = view.arcRuler;
+        const nTicks = linearPositions.length;
+        if (nTicks < 2) continue;
+        const maxPos = Math.max(linearPositions[nTicks - 1], EPSILON);
 
-      ctx.strokeStyle = "rgba(29, 29, 31, 0.12)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(padX, yLinear);
-      ctx.lineTo(padX + usableW, yLinear);
-      ctx.stroke();
+        ctx.save();
+        ctx.translate(seg * frameW, 0);
 
-      ctx.strokeStyle = "rgba(43, 156, 148, 0.52)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(padX, yArc);
-      ctx.lineTo(padX + usableW, yArc);
-      ctx.stroke();
+        if (seg === 0) {
+          ctx.font = `600 10px ${CANVAS_MONO}`;
+          ctx.fillStyle = PALETTE.faint;
+          ctx.fillText("Linear", 8, yLinear + 4);
+          ctx.fillStyle = PALETTE.teal;
+          ctx.fillText("ArcLen", 8, yArc + 4);
+        } else {
+          ctx.font = `600 10px ${CANVAS_MONO}`;
+          ctx.fillStyle = "rgba(134, 134, 139, 0.62)";
+          ctx.fillText(`下一段 · ${view.continuationKey || "后续语音"}`, 8, 14);
+        }
 
-      for (let i = 0; i < nTicks; i++) {
-        const lx = padX + (linearPositions[i] / maxPos) * usableW;
-        const ax = padX + (arcPositions[i] / maxPos) * usableW;
-
-        ctx.strokeStyle = "rgba(0, 113, 227, 0.24)";
-        ctx.lineWidth = 1;
+        ctx.save();
         ctx.beginPath();
-        ctx.moveTo(lx, yLinear + 5);
-        ctx.bezierCurveTo(lx, (yLinear + yArc) * 0.5, ax, (yLinear + yArc) * 0.5, ax, yArc - 5);
+        ctx.rect(padX, 0, Math.max(0, revealX - padX), h);
+        ctx.clip();
+
+        ctx.strokeStyle = "rgba(29, 29, 31, 0.12)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(padX, yLinear);
+        ctx.lineTo(padX + usableW, yLinear);
         ctx.stroke();
 
-        ctx.fillStyle = PALETTE.faint;
-        ctx.fillRect(lx - 1.5, yLinear - 6, 3, 12);
-
-        ctx.fillStyle = PALETTE.teal;
+        ctx.strokeStyle = "rgba(43, 156, 148, 0.52)";
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(ax, yArc, 4, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(padX, yArc);
+        ctx.lineTo(padX + usableW, yArc);
+        ctx.stroke();
 
-        ctx.font = `500 9px ${CANVAS_MONO}`;
-        ctx.fillStyle = PALETTE.muted;
-        ctx.fillText(`s${i}`, ax - 6, yArc + 16);
-      }
-      ctx.restore();
+        for (let i = 0; i < nTicks; i++) {
+          const lx = padX + (linearPositions[i] / maxPos) * usableW;
+          const ax = padX + (arcPositions[i] / maxPos) * usableW;
 
-      const hintAlpha = clamp01((progress - 0.68) / 0.24);
-      if (hintAlpha > 0) {
-        ctx.save();
-        ctx.globalAlpha = hintAlpha;
-        ctx.font = `500 10px ${CANVAS_SANS}`;
-        ctx.fillStyle = PALETTE.faint;
-        const rateHint = studioState.speakingRate < 0.85
-          ? "当前慢速拖音，等弧长刻度自动变疏"
-          : studioState.speakingRate > 1.15
-            ? "当前快速连读，高速段等弧长刻度自动加密"
-            : "标准语速，几何弧长均匀对齐";
-        ctx.fillText(rateHint, Math.max(padX, w - ctx.measureText(rateHint).width - 10), 14);
+          ctx.strokeStyle = "rgba(0, 113, 227, 0.24)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(lx, yLinear + 5);
+          ctx.bezierCurveTo(lx, (yLinear + yArc) * 0.5, ax, (yLinear + yArc) * 0.5, ax, yArc - 5);
+          ctx.stroke();
+
+          ctx.fillStyle = PALETTE.faint;
+          ctx.fillRect(lx - 1.5, yLinear - 6, 3, 12);
+
+          ctx.fillStyle = PALETTE.teal;
+          ctx.beginPath();
+          ctx.arc(ax, yArc, 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.font = `500 9px ${CANVAS_MONO}`;
+          ctx.fillStyle = PALETTE.muted;
+          ctx.fillText(`s${i}`, ax - 6, yArc + 16);
+        }
         ctx.restore();
-      }
 
-      const inspect = scrubPosition("tempo");
-      if (inspect !== null) {
-        const inspectX = padX + usableW * inspect;
-        drawInspectionGuide(ctx, inspectX, yLinear - 8, yArc + 8, "rgba(43, 156, 148, 0.72)", yArc);
+        if (seg === 0 && hintAlpha > 0) {
+          ctx.save();
+          ctx.globalAlpha = hintAlpha;
+          ctx.font = `500 10px ${CANVAS_SANS}`;
+          ctx.fillStyle = PALETTE.faint;
+          const rateHint = studioState.speakingRate < 0.85
+            ? "当前慢速拖音，等弧长刻度自动变疏"
+            : studioState.speakingRate > 1.15
+              ? "当前快速连读，高速段等弧长刻度自动加密"
+              : "标准语速，几何弧长均匀对齐";
+          ctx.fillText(rateHint, Math.max(padX, frameW - ctx.measureText(rateHint).width - 10), 14);
+          ctx.restore();
+        }
+
+        ctx.restore();
       }
     }
 
@@ -1597,40 +1652,19 @@
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      const { vector: qVec, segments } = telemetry.barcode;
       const tmplItem = studioState.templates.get(studioState.selectedTemplateKey)
         || studioState.templates.values().next().value;
       if (!tmplItem) return;
       const tVec = tmplItem.template;
-      const dim = qVec.length;
 
-      const padLeft = 82;
-      const padRight = 10;
-      const barW = Math.max(60, w - padLeft - padRight);
-      const cellW = barW / dim;
+      const frameW = w / PAN_SEGMENTS;
       const rowH = Math.max(24, Math.min(38, (h - 100) / 3.1));
       const y1 = 44;
       const y2 = y1 + rowH + 20;
       const y3 = y2 + rowH + 20;
       const progress = sectionProgress("fingerprint");
-      const revealX = padLeft + barW * progress;
 
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(padLeft, 0, Math.max(0, revealX - padLeft), h);
-      ctx.clip();
-
-      // Thin partition accents replace header boxes.
-      for (const seg of segments) {
-        const sx = padLeft + seg.start * cellW;
-        const sw = Math.max(3, (seg.end - seg.start) * cellW - 2);
-        ctx.fillStyle = seg.color;
-        ctx.globalAlpha = 0.72;
-        ctx.fillRect(sx, 20, sw, 2);
-      }
-      ctx.globalAlpha = 1;
-
-      function sampleValue(vec, position) {
+      function sampleValue(vec, position, dim) {
         const pos = Math.max(0, Math.min(dim - 1, position));
         const lo = Math.floor(pos);
         const hi = Math.min(lo + 1, dim - 1);
@@ -1638,12 +1672,12 @@
         return vec[lo] * (1 - frac) + vec[hi] * frac;
       }
 
-      function drawRibbon(values, y, rowHeight) {
+      function drawRibbon(values, y, rowHeight, padLeft, barW, dim) {
         const steps = Math.max(180, Math.floor(barW * 1.5));
         const stepW = barW / steps + 0.65;
         for (let s = 0; s < steps; s++) {
           const ratio = s / Math.max(steps - 1, 1);
-          const value = sampleValue(values, ratio * (dim - 1));
+          const value = sampleValue(values, ratio * (dim - 1), dim);
           const norm = Math.max(-1, Math.min(1, value * 4.4));
           const alpha = 0.055 + 0.75 * Math.abs(norm);
           const rgb = norm >= 0 ? "0, 113, 227" : "230, 106, 78";
@@ -1652,36 +1686,68 @@
         }
       }
 
-      drawRibbon(qVec, y1, rowH);
-      drawRibbon(tVec, y2, rowH);
-
-      const steps = Math.max(180, Math.floor(barW * 1.5));
-      const stepW = barW / steps + 0.65;
       const matchH = Math.max(10, rowH * 0.48);
-      for (let s = 0; s < steps; s++) {
-        const ratio = s / Math.max(steps - 1, 1);
-        const q = sampleValue(qVec, ratio * (dim - 1));
-        const t = sampleValue(tVec, ratio * (dim - 1));
-        const match = Math.max(0, 1 - Math.abs(q - t) * 3.8);
-        const rgb = match > 0.55 ? "43, 156, 148" : "230, 106, 78";
-        const alpha = match > 0.55 ? 0.22 + 0.48 * match : 0.30 + 0.35 * (1 - match);
-        ctx.fillStyle = `rgba(${rgb}, ${alpha.toFixed(3)})`;
-        ctx.fillRect(padLeft + ratio * barW, y3, stepW, matchH);
-      }
-      ctx.restore();
 
-      ctx.font = `600 9px ${CANVAS_MONO}`;
-      ctx.fillStyle = PALETTE.inkSoft;
-      ctx.fillText("当前指纹", 8, y1 + rowH * 0.62);
-      ctx.fillStyle = PALETTE.blue;
-      ctx.fillText("模板指纹", 8, y2 + rowH * 0.62);
-      ctx.fillStyle = PALETTE.faint;
-      ctx.fillText("逐维共振", 8, y3 + matchH * 0.72);
+      for (let board = 0; board < PAN_SEGMENTS; board++) {
+        const view = board === 0 ? telemetry : (telemetry.continuation || telemetry);
+        const { vector: qVec, segments } = view.barcode;
+        const dim = qVec.length;
 
-      const inspect = scrubPosition("fingerprint");
-      if (inspect !== null) {
-        const inspectX = padLeft + barW * inspect;
-        drawInspectionGuide(ctx, inspectX, y1 - 8, y3 + matchH + 8, "rgba(0, 113, 227, 0.64)");
+        ctx.save();
+        ctx.translate(board * frameW, 0);
+
+        const padLeft = board === 0 ? 82 : 10;
+        const padRight = 10;
+        const barW = Math.max(60, frameW - padLeft - padRight);
+        const cellW = barW / dim;
+        const revealX = padLeft + barW * progress;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(padLeft, 0, Math.max(0, revealX - padLeft), h);
+        ctx.clip();
+
+        // Thin partition accents replace header boxes.
+        for (const seg of segments) {
+          const sx = padLeft + seg.start * cellW;
+          const sw = Math.max(3, (seg.end - seg.start) * cellW - 2);
+          ctx.fillStyle = seg.color;
+          ctx.globalAlpha = 0.72;
+          ctx.fillRect(sx, 20, sw, 2);
+        }
+        ctx.globalAlpha = 1;
+
+        drawRibbon(qVec, y1, rowH, padLeft, barW, dim);
+        drawRibbon(tVec, y2, rowH, padLeft, barW, dim);
+
+        const steps = Math.max(180, Math.floor(barW * 1.5));
+        const stepW = barW / steps + 0.65;
+        for (let s = 0; s < steps; s++) {
+          const ratio = s / Math.max(steps - 1, 1);
+          const q = sampleValue(qVec, ratio * (dim - 1), dim);
+          const t = sampleValue(tVec, ratio * (dim - 1), dim);
+          const match = Math.max(0, 1 - Math.abs(q - t) * 3.8);
+          const rgb = match > 0.55 ? "43, 156, 148" : "230, 106, 78";
+          const alpha = match > 0.55 ? 0.22 + 0.48 * match : 0.30 + 0.35 * (1 - match);
+          ctx.fillStyle = `rgba(${rgb}, ${alpha.toFixed(3)})`;
+          ctx.fillRect(padLeft + ratio * barW, y3, stepW, matchH);
+        }
+        ctx.restore();
+
+        ctx.font = `600 9px ${CANVAS_MONO}`;
+        if (board === 0) {
+          ctx.fillStyle = PALETTE.inkSoft;
+          ctx.fillText("当前指纹", 8, y1 + rowH * 0.62);
+          ctx.fillStyle = PALETTE.blue;
+          ctx.fillText("模板指纹", 8, y2 + rowH * 0.62);
+          ctx.fillStyle = PALETTE.faint;
+          ctx.fillText("逐维共振", 8, y3 + matchH * 0.72);
+        } else {
+          ctx.fillStyle = "rgba(134, 134, 139, 0.62)";
+          ctx.fillText(`下一段 · ${view.continuationKey || "后续语音"}`, 10, y1 - 8);
+        }
+
+        ctx.restore();
       }
 
       // Segment boundaries live in the slim color ticks above the ribbons.
@@ -1962,9 +2028,7 @@
           if (!scrub) return;
           const max = Number(event.currentTarget.max) || 1000;
           scrub.position = clamp01(Number(event.currentTarget.value) / max);
-          scrub.touched = true;
           updateScrubberUI(key);
-          if (studioState.displayTelemetry) renderAllUI(studioState.displayTelemetry);
         });
       });
 

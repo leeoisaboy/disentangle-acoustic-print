@@ -1577,7 +1577,7 @@ input[type="range"]::-moz-range-thumb {
   border: 0;
   border-radius: 0;
   background: transparent;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .stage::before {
@@ -1590,10 +1590,11 @@ input[type="range"]::-moz-range-thumb {
   filter: blur(24px);
 }
 
-.stage canvas {
+.stage > canvas {
   display: block;
-  width: 100%;
+  width: 200%;
   height: 100%;
+  will-change: transform;
 }
 
 .stage--ruler {
