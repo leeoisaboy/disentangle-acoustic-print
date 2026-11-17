@@ -28,7 +28,7 @@
 
 <p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">Open Acoustic Print Studio</a></strong></p>
 
-The animation is captured from the working page. The four tracks sit on one continuous scroll, and each act fades in as the next approaches. The default view keeps one primary action, the current phrase, and the four tracks. Tempo, timbre, threshold, and enrollment controls unfold on demand. The online Studio runs in the browser and supports microphone streaming, WAV drag-and-drop, a frame-shuffle control, dual-tempo enrollment, and telemetry export. The static page needs no backend and processes audio locally.
+The animation is captured from the working page. The four tracks sit on one continuous scroll. When an act enters the viewport, its curve draws slowly from left to right, then rests on one complete utterance. Coordinates, peaks, and match bands stay fixed; the chart never slides sideways. The default view keeps one primary action, the current phrase, and the four tracks. Tempo, timbre, threshold, and enrollment controls unfold on demand. The online Studio runs in the browser and supports microphone streaming, WAV drag-and-drop, a frame-shuffle control, dual-tempo enrollment, and telemetry export. The static page needs no backend and processes audio locally.
 
 All four tracks read the same telemetry packet.
 

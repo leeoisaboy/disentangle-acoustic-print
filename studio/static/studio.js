@@ -430,7 +430,14 @@
       lastEnrollSlow: [],
       lastTelemetry: null,
       smoothedTelemetry: null,
-      streamCursor: 0
+      displayTelemetry: null,
+      sweepDurationMs: 6200,
+      sweeps: {
+        wave: { elapsed: 0, active: false, started: false },
+        kinematics: { elapsed: 0, active: false, started: false },
+        tempo: { elapsed: 0, active: false, started: false },
+        fingerprint: { elapsed: 0, active: false, started: false }
+      }
     };
 
     // Initialize orthogonal speaker subspace basis and 4 dialect templates
@@ -763,6 +770,20 @@
       return telemetry;
     }
 
+    // Presentation frames read one frozen snapshot. Only the reveal boundary moves.
+    function refreshDisplayTelemetry(restartSweeps = false) {
+      const telemetry = computeFullTelemetry();
+      studioState.displayTelemetry = telemetry;
+      if (restartSweeps) restartActiveSweeps();
+      return telemetry;
+    }
+
+    function renderCurrentSnapshot(restartSweeps = false) {
+      const telemetry = refreshDisplayTelemetry(restartSweeps);
+      renderAllUI(telemetry);
+      return telemetry;
+    }
+
     // =========================================================================
     // 3. Web Audio Synthesizer & Real-Time Microphone Stream Bridge
     // =========================================================================
@@ -960,7 +981,7 @@
         pushSingleFrame(q, 0.01 * rng.nextGaussian());
       }
       playSynthesizedPhraseSound(key, studioState.speakingRate);
-      renderAllUI(computeFullTelemetry());
+      renderCurrentSnapshot(true);
       if (announce) {
         showToast(`已注入「${key}」(语速 ${studioState.speakingRate.toFixed(2)}x, 音色干扰 ${Math.round(studioState.speakerNuisance * 100)}%)`);
       }
@@ -994,17 +1015,103 @@
       return values[lo] * (1.0 - frac) + values[hi] * frac;
     }
 
-    function traceScrollingSeries(ctx, values, x0, x1, phase, mapY) {
+    function smoothSeries(values, radius = 1) {
       const n = values.length;
-      if (n < 2) return;
-      const spacing = (x1 - x0) / Math.max(n - 1, 1);
-      const steps = Math.max(2, Math.ceil(x1 - x0));
-      for (let i = 0; i <= steps; i++) {
-        const x = x0 + (x1 - x0) * (i / steps);
-        const logicalPosition = (x - x0) / Math.max(spacing, EPSILON) - phase;
-        const y = mapY(sampleSeries(values, logicalPosition));
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      const out = new Float64Array(n);
+      if (n === 0) return out;
+      for (let i = 0; i < n; i++) {
+        let sum = 0.0;
+        let weightSum = 0.0;
+        for (let k = -radius; k <= radius; k++) {
+          const index = Math.max(0, Math.min(n - 1, i + k));
+          const weight = radius + 1 - Math.abs(k);
+          sum += values[index] * weight;
+          weightSum += weight;
+        }
+        out[i] = sum / Math.max(weightSum, EPSILON);
+      }
+      return out;
+    }
+
+    function clamp01(value) {
+      return Math.max(0.0, Math.min(1.0, value));
+    }
+
+    function easeReveal(value) {
+      const t = clamp01(value);
+      return t * t * (3.0 - 2.0 * t);
+    }
+
+    function buildSmoothPoints(values, x0, x1, mapY) {
+      const n = values.length;
+      const points = new Array(n);
+      for (let i = 0; i < n; i++) {
+        const x = x0 + (x1 - x0) * (i / Math.max(n - 1, 1));
+        points[i] = { x, y: mapY(values[i]) };
+      }
+      return points;
+    }
+
+    function appendSmoothCurve(ctx, points) {
+      if (points.length === 0) return;
+      if (points.length === 1) return;
+      if (points.length === 2) {
+        ctx.lineTo(points[1].x, points[1].y);
+        return;
+      }
+      for (let i = 1; i < points.length - 1; i++) {
+        const midX = (points[i].x + points[i + 1].x) * 0.5;
+        const midY = (points[i].y + points[i + 1].y) * 0.5;
+        ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
+      }
+      const last = points[points.length - 1];
+      ctx.quadraticCurveTo(last.x, last.y, last.x, last.y);
+    }
+
+    function traceSmoothPath(ctx, points) {
+      if (points.length === 0) return;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      appendSmoothCurve(ctx, points);
+    }
+
+    function sectionProgress(key) {
+      if (CAPTURE_MODE) return 1.0;
+      const sweep = studioState.sweeps[key];
+      if (!sweep) return 1.0;
+      return easeReveal(sweep.elapsed / Math.max(studioState.sweepDurationMs, 1));
+    }
+
+    function startSectionSweep(key) {
+      const sweep = studioState.sweeps[key];
+      if (!sweep || sweep.started) return;
+      sweep.elapsed = 0.0;
+      sweep.active = true;
+      sweep.started = true;
+    }
+
+    function restartActiveSweeps() {
+      for (const sweep of Object.values(studioState.sweeps)) {
+        if (sweep.active) {
+          sweep.elapsed = 0.0;
+          sweep.active = true;
+        }
+      }
+    }
+
+    function completeAllSweeps() {
+      for (const sweep of Object.values(studioState.sweeps)) {
+        sweep.elapsed = studioState.sweepDurationMs;
+        sweep.active = false;
+        sweep.started = true;
+      }
+    }
+
+    function advanceSweeps(deltaMs) {
+      for (const sweep of Object.values(studioState.sweeps)) {
+        if (!sweep.active) continue;
+        sweep.elapsed = Math.min(studioState.sweepDurationMs, sweep.elapsed + deltaMs);
+        if (sweep.elapsed >= studioState.sweepDurationMs) sweep.active = false;
       }
     }
 
@@ -1026,7 +1133,21 @@
       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
-    // Track 1: one continuous waveform, soft match fields, no boxed overlays.
+    function drawTraceHead(ctx, x, y, color) {
+      const halo = ctx.createRadialGradient(x, y, 0, x, y, 12);
+      halo.addColorStop(0, "rgba(0, 113, 227, 0.18)");
+      halo.addColorStop(1, "rgba(0, 113, 227, 0)");
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(x, y, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Track 1: a frozen waveform revealed like a slowly writing ECG trace.
     function drawTrack1(telemetry) {
       const env = prepareCanvas("canvasTrack1");
       if (!env) return;
@@ -1034,12 +1155,16 @@
       ctx.clearRect(0, 0, w, h);
 
       const T = telemetry.frameCount;
-      const wave = telemetry.waveform;
-      const speedNorm = telemetry.frameSpeedNorm;
+      if (T < 2) return;
+      const progress = sectionProgress("wave");
+      const wave = smoothSeries(telemetry.waveform, 2);
+      const speedNorm = smoothSeries(telemetry.frameSpeedNorm, 2);
       const midY = h * 0.54;
-      const phase = studioState.isPlaying ? studioState.streamCursor : 0.0;
-      const spacing = (w - 20) / Math.max(T - 1, 1);
-      const xAt = (t) => (t - phase) * spacing + 10;
+      const x0 = 10;
+      const x1 = w - 10;
+      const xAt = (t) => x0 + ((x1 - x0) * t) / Math.max(T - 1, 1);
+      const revealX = x0 + (x1 - x0) * progress;
+      const points = buildSmoothPoints(wave, x0, x1, (value) => midY - value * (h * 0.36));
 
       ctx.strokeStyle = "rgba(29, 29, 31, 0.07)";
       ctx.lineWidth = 1;
@@ -1048,94 +1173,115 @@
       ctx.lineTo(w - 8, midY);
       ctx.stroke();
 
-      const area = ctx.createLinearGradient(0, midY - h * 0.34, 0, midY + h * 0.34);
-      area.addColorStop(0, "rgba(0, 113, 227, 0.12)");
-      area.addColorStop(0.52, "rgba(0, 113, 227, 0.045)");
-      area.addColorStop(1, "rgba(0, 113, 227, 0)");
-      ctx.fillStyle = area;
-      ctx.beginPath();
-      ctx.moveTo(xAt(0), midY);
-      for (let t = 0; t < T; t++) {
-        ctx.lineTo(xAt(t), midY - wave[t] * (h * 0.36));
-      }
-      ctx.lineTo(w - 10, midY);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.lineWidth = 1.7;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      for (let t = 1; t < T; t++) {
-        ctx.strokeStyle = speedToColor(speedNorm[t], 0.86);
-        ctx.beginPath();
-        ctx.moveTo(xAt(t - 1), midY - wave[t - 1] * (h * 0.36));
-        ctx.lineTo(xAt(t), midY - wave[t] * (h * 0.36));
-        ctx.stroke();
-      }
-
-      const cusumIdx = telemetry.streamEv.cusum.changeIndex;
-      const cusumX = xAt(cusumIdx);
       ctx.save();
-      ctx.strokeStyle = "rgba(230, 106, 78, 0.42)";
+      ctx.beginPath();
+      ctx.rect(0, 0, Math.max(0, revealX), h);
+      ctx.clip();
+
+      for (let idx = telemetry.activeMatches.length - 1; idx >= 0; idx--) {
+        const match = telemetry.activeMatches[idx];
+        const bandX1 = xAt(match.start);
+        const bandX2 = xAt(Math.min(match.end, T - 1));
+        const width = Math.max(18, bandX2 - bandX1);
+        const isTop = idx === 0;
+        const alpha = isTop ? 0.10 : 0.045;
+        const color = isTop ? "0, 113, 227" : "123, 107, 176";
+        const band = ctx.createLinearGradient(bandX1, 0, bandX1 + width, 0);
+        band.addColorStop(0, `rgba(${color}, 0)`);
+        band.addColorStop(0.18, `rgba(${color}, ${alpha})`);
+        band.addColorStop(0.82, `rgba(${color}, ${alpha})`);
+        band.addColorStop(1, `rgba(${color}, 0)`);
+        ctx.fillStyle = band;
+        ctx.fillRect(bandX1, 0, width, h);
+      }
+
+      const cusumX = xAt(telemetry.streamEv.cusum.changeIndex);
+      ctx.save();
+      ctx.strokeStyle = "rgba(230, 106, 78, 0.36)";
       ctx.lineWidth = 1;
-      ctx.setLineDash([2, 5]);
+      ctx.setLineDash([2, 6]);
       ctx.beginPath();
       ctx.moveTo(cusumX, 10);
       ctx.lineTo(cusumX, h - 10);
       ctx.stroke();
       ctx.restore();
 
-      for (let idx = telemetry.activeMatches.length - 1; idx >= 0; idx--) {
-        const m = telemetry.activeMatches[idx];
-        const x1 = xAt(m.start);
-        const x2 = xAt(Math.min(m.end, T - 1));
-        const width = Math.max(18, x2 - x1);
-        const isTop = idx === 0;
-        const alpha = isTop ? 0.10 : 0.045;
-        const color = isTop ? "0, 113, 227" : "123, 107, 176";
-        const band = ctx.createLinearGradient(x1, 0, x1 + width, 0);
-        band.addColorStop(0, `rgba(${color}, 0)`);
-        band.addColorStop(0.18, `rgba(${color}, ${alpha})`);
-        band.addColorStop(0.82, `rgba(${color}, ${alpha})`);
-        band.addColorStop(1, `rgba(${color}, 0)`);
-        ctx.fillStyle = band;
-        ctx.fillRect(x1, 0, width, h);
+      const area = ctx.createLinearGradient(0, midY - h * 0.34, 0, midY + h * 0.34);
+      area.addColorStop(0, "rgba(0, 113, 227, 0.12)");
+      area.addColorStop(0.52, "rgba(0, 113, 227, 0.045)");
+      area.addColorStop(1, "rgba(0, 113, 227, 0)");
+      ctx.fillStyle = area;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, midY);
+      ctx.lineTo(points[0].x, points[0].y);
+      appendSmoothCurve(ctx, points);
+      ctx.lineTo(points[points.length - 1].x, midY);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(0, 113, 227, 0.13)";
+      ctx.lineWidth = 7;
+      traceSmoothPath(ctx, points);
+      ctx.stroke();
+
+      const strokeGradient = ctx.createLinearGradient(x0, 0, x1, 0);
+      for (let stop = 0; stop <= 12; stop++) {
+        const ratio = stop / 12;
+        const sampleIndex = Math.round(ratio * (T - 1));
+        strokeGradient.addColorStop(ratio, speedToColor(speedNorm[sampleIndex], 0.90));
       }
+      ctx.strokeStyle = strokeGradient;
+      ctx.lineWidth = 1.8;
+      traceSmoothPath(ctx, points);
+      ctx.stroke();
+      ctx.restore();
 
       const topMatch = telemetry.activeMatches[0];
       if (topMatch) {
-        const label = `${topMatch.key} · ${topMatch.score.toFixed(2)}`;
-        ctx.font = `550 10px ${CANVAS_MONO}`;
-        ctx.fillStyle = "rgba(0, 88, 178, 0.78)";
-        ctx.fillText(label, Math.min(w - 170, Math.max(10, xAt(topMatch.start))), 20);
+        const labelX = xAt(topMatch.start);
+        const alpha = clamp01((revealX - labelX) / 72);
+        if (alpha > 0) {
+          const label = `${topMatch.key} · ${topMatch.score.toFixed(2)}`;
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.font = `550 10px ${CANVAS_MONO}`;
+          ctx.fillStyle = "rgba(0, 88, 178, 0.78)";
+          ctx.fillText(label, Math.min(w - 190, Math.max(10, labelX)), 20);
+          ctx.restore();
+        }
+      }
+
+      if (progress > 0.002 && progress < 0.995) {
+        const headY = midY - sampleSeries(wave, progress * (T - 1)) * (h * 0.36);
+        drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
       }
     }
 
-    // Track 2: Latent Kinematics White-Box Curves (Speed + Dual Peaks + CUSUM + Turning Angle)
-    function drawTrack2(telemetry, pulsePhase) {
+    // Track 2: fixed latent kinematics, revealed from left to right.
+    function drawTrack2(telemetry) {
       const env = prepareCanvas("canvasTrack2");
       if (!env) return;
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      ctx.strokeStyle = "rgba(29, 29, 31, 0.055)";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(8, h - 12);
-      ctx.lineTo(w - 8, h - 12);
-      ctx.stroke();
-
-      const speed = telemetry.decomp.speed;
-      const turning = telemetry.decomp.turning;
-      const cusumCurve = telemetry.streamEv.cusum.curve;
+      const speed = smoothSeries(telemetry.decomp.speed, 3);
+      const turning = smoothSeries(telemetry.decomp.turning, 3);
+      const cusumCurve = smoothSeries(telemetry.streamEv.cusum.curve, 3);
       const cusumIdx = telemetry.streamEv.cusum.changeIndex;
       const peaks = telemetry.streamEv.peaks;
       const nSp = speed.length;
-      const phase = studioState.isPlaying ? studioState.streamCursor : 0.0;
+      if (nSp < 2) return;
+
+      const progress = sectionProgress("kinematics");
       const padX = 8;
       const usableW = Math.max(20, w - 16);
-      const spacing = usableW / Math.max(nSp - 1, 1);
-      const xAt = (index) => padX + (index - phase) * spacing;
+      const xAt = (index) => padX + (usableW * index) / Math.max(nSp - 1, 1);
+      const revealX = padX + usableW * progress;
+      const speedY = (value) => h - 12 - (value / maxSp) * (h - 28);
+      const cusumY = (value) => h - 12 - (0.5 + 0.45 * (value / maxCusum)) * (h - 24);
+      const turningY = (value) => h - 14 - ((value + 1.0) * 0.5) * (h - 32);
 
       let maxSp = EPSILON;
       for (let i = 0; i < nSp; i++) if (speed[i] > maxSp) maxSp = speed[i];
@@ -1144,114 +1290,123 @@
         if (Math.abs(cusumCurve[i]) > maxCusum) maxCusum = Math.abs(cusumCurve[i]);
       }
 
-      // 1. Turning Angle Curve cos(theta_t) in [-1, 1] (purple dashed)
-      if (turning.length > 1) {
+      const speedPoints = buildSmoothPoints(speed, padX, w - padX, speedY);
+      const cusumPoints = buildSmoothPoints(cusumCurve, padX, w - padX, cusumY);
+      const turningPoints = buildSmoothPoints(turning, padX, w - padX, turningY);
+
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.055)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padX, h - 12);
+      ctx.lineTo(w - padX, h - 12);
+      ctx.stroke();
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, Math.max(0, revealX), h);
+      ctx.clip();
+
+      ctx.save();
+      ctx.strokeStyle = "rgba(123, 107, 176, 0.20)";
+      ctx.lineWidth = 1.0;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      traceSmoothPath(ctx, turningPoints);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.strokeStyle = "rgba(230, 106, 78, 0.56)";
+      ctx.lineWidth = 1.25;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      traceSmoothPath(ctx, cusumPoints);
+      ctx.stroke();
+      ctx.restore();
+
+      const grad = ctx.createLinearGradient(0, 10, 0, h);
+      grad.addColorStop(0, "rgba(0, 113, 227, 0.13)");
+      grad.addColorStop(1, "rgba(0, 113, 227, 0.0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(speedPoints[0].x, h - 12);
+      ctx.lineTo(speedPoints[0].x, speedPoints[0].y);
+      appendSmoothCurve(ctx, speedPoints);
+      ctx.lineTo(speedPoints[speedPoints.length - 1].x, h - 12);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(0, 113, 227, 0.12)";
+      ctx.lineWidth = 7;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      traceSmoothPath(ctx, speedPoints);
+      ctx.stroke();
+
+      const speedGradient = ctx.createLinearGradient(padX, 0, w - padX, 0);
+      for (let stop = 0; stop <= 12; stop++) {
+        const ratio = stop / 12;
+        const sampleIndex = Math.round(ratio * (nSp - 1));
+        speedGradient.addColorStop(ratio, speedToColor(clamp01(speed[sampleIndex] / maxSp), 0.94));
+      }
+      ctx.strokeStyle = speedGradient;
+      ctx.lineWidth = 1.8;
+      traceSmoothPath(ctx, speedPoints);
+      ctx.stroke();
+      ctx.restore();
+
+      const laserX = xAt(cusumIdx);
+      const laserAlpha = clamp01((revealX - laserX) / 58);
+      if (laserAlpha > 0) {
         ctx.save();
-        ctx.strokeStyle = "rgba(123, 107, 176, 0.20)";
-        ctx.lineWidth = 1.0;
+        ctx.globalAlpha = laserAlpha;
+        ctx.strokeStyle = PALETTE.coral;
+        ctx.lineWidth = 1.1;
+        ctx.setLineDash([3, 5]);
         ctx.beginPath();
-        traceScrollingSeries(
-          ctx,
-          turning,
-          padX,
-          w - padX,
-          phase,
-          (value) => h - 14 - ((value + 1.0) * 0.5) * (h - 32)
-        );
+        ctx.moveTo(laserX, 4);
+        ctx.lineTo(laserX, h - 4);
         ctx.stroke();
         ctx.restore();
       }
 
-      // 2. Zero-mean CUSUM curve.
-      ctx.save();
-      ctx.strokeStyle = "rgba(230, 106, 78, 0.62)";
-      ctx.lineWidth = 1.25;
-      ctx.beginPath();
-      traceScrollingSeries(
-        ctx,
-        cusumCurve,
-        padX,
-        w - padX,
-        phase,
-        (value) => h - 12 - (0.5 + 0.45 * (value / maxCusum)) * (h - 24)
-      );
-      ctx.stroke();
-      ctx.restore();
-
-      // 3. Speed curve with a restrained gradient fill.
-      ctx.save();
-      const grad = ctx.createLinearGradient(0, 10, 0, h);
-      grad.addColorStop(0, "rgba(0, 113, 227, 0.14)");
-      grad.addColorStop(1, "rgba(0, 113, 227, 0.0)");
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.moveTo(xAt(0), h - 10);
-      for (let i = 0; i < nSp; i++) {
-        const x = xAt(i);
-        const y = h - 12 - (speed[i] / maxSp) * (h - 28);
-        ctx.lineTo(x, y);
+      const labelAlpha = clamp01((progress - 0.58) / 0.22);
+      if (labelAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = labelAlpha;
+        ctx.fillStyle = PALETTE.coral;
+        ctx.font = `600 10px ${CANVAS_MONO}`;
+        ctx.fillText(`CUSUM 变点 ${(cusumIdx / Math.max(nSp - 1, 1)).toFixed(2)}`, 8, 14);
+        ctx.restore();
       }
-      ctx.lineTo(w - 8, h - 10);
-      ctx.closePath();
-      ctx.fill();
 
-      ctx.strokeStyle = PALETTE.blue;
-      ctx.lineWidth = 1.8;
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      traceScrollingSeries(
-        ctx,
-        speed,
-        padX,
-        w - padX,
-        phase,
-        (value) => h - 12 - (value / maxSp) * (h - 28)
-      );
-      ctx.stroke();
-      ctx.restore();
-
-      // 4. Vertical CUSUM change-point marker.
-      const laserX = xAt(cusumIdx);
-      ctx.save();
-      ctx.strokeStyle = PALETTE.coral;
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([3, 5]);
-      ctx.beginPath();
-      ctx.moveTo(laserX, 4);
-      ctx.lineTo(laserX, h - 4);
-      ctx.stroke();
-
-      ctx.setLineDash([]);
-      ctx.fillStyle = PALETTE.coral;
-      ctx.font = `600 10px ${CANVAS_MONO}`;
-      const cpLabel = `CUSUM 变点 ${(cusumIdx / Math.max(nSp - 1, 1)).toFixed(2)}`;
-      const cpX = 8;
-      ctx.fillText(cpLabel, cpX, 14);
-      ctx.restore();
-
-      // 5. Dual Peak Lock Indicators (Primary & Secondary Peaks from select_peak_indices)
-      const peakLabels = ["主峰 P1", "次峰 P2"];
       const peakColors = [PALETTE.blue, PALETTE.teal];
       for (let p = 0; p < Math.min(2, peaks.length); p++) {
         const idx = peaks[p];
         const px = xAt(idx);
-        const py = h - 12 - (speed[idx] / maxSp) * (h - 28);
-        const radius = p === 0 ? 4.8 : 4.0;
+        const alpha = clamp01((revealX - px) / 48);
+        if (alpha <= 0) continue;
+        const py = speedY(speed[idx]);
+        const radius = p === 0 ? 4.6 : 3.8;
 
         ctx.save();
+        ctx.globalAlpha = alpha;
         ctx.fillStyle = peakColors[p];
         ctx.beginPath();
         ctx.arc(px, py, radius, 0, Math.PI * 2);
         ctx.fill();
-
         ctx.font = `650 9px ${CANVAS_MONO}`;
-        ctx.fillStyle = p === 0 ? PALETTE.blue : PALETTE.teal;
         ctx.fillText(p === 0 ? "P1" : "P2", Math.max(6, px - 7), Math.max(11, py - 8));
         ctx.restore();
       }
+
+      if (progress > 0.002 && progress < 0.995) {
+        const headY = speedY(sampleSeries(speed, progress * (nSp - 1)));
+        drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
+      }
     }
 
-    // Track 3: Equal-Arc-Length Resampling Ruler vs Linear Uniform Sampling
+    // Track 3: a fixed tempo ruler painted progressively from left to right.
     function drawTrack3(telemetry) {
       const env = prepareCanvas("canvasTrack3");
       if (!env) return;
@@ -1260,21 +1415,27 @@
 
       const { linearPositions, arcPositions } = telemetry.arcRuler;
       const nTicks = linearPositions.length;
+      if (nTicks < 2) return;
       const maxPos = Math.max(linearPositions[nTicks - 1], EPSILON);
+      const progress = sectionProgress("tempo");
 
       const padX = 52;
       const usableW = Math.max(40, w - padX * 2);
+      const revealX = padX + usableW * progress;
       const yLinear = 28;
       const yArc = h - 26;
 
-      // Labels on left
       ctx.font = `600 10px ${CANVAS_MONO}`;
       ctx.fillStyle = PALETTE.faint;
       ctx.fillText("Linear", 8, yLinear + 4);
       ctx.fillStyle = PALETTE.teal;
       ctx.fillText("ArcLen", 8, yArc + 4);
 
-      // Horizontal ruler rails
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padX, 0, Math.max(0, revealX - padX), h);
+      ctx.clip();
+
       ctx.strokeStyle = "rgba(29, 29, 31, 0.12)";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -1289,24 +1450,20 @@
       ctx.lineTo(padX + usableW, yArc);
       ctx.stroke();
 
-      // Elastic warp connectors between Linear Uniform ticks and Equal-Arc-Length ticks
       for (let i = 0; i < nTicks; i++) {
         const lx = padX + (linearPositions[i] / maxPos) * usableW;
         const ax = padX + (arcPositions[i] / maxPos) * usableW;
 
-        // Connector curve showing time-warp compensation
-        ctx.strokeStyle = "rgba(0, 113, 227, 0.26)";
+        ctx.strokeStyle = "rgba(0, 113, 227, 0.24)";
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(lx, yLinear + 5);
         ctx.bezierCurveTo(lx, (yLinear + yArc) * 0.5, ax, (yLinear + yArc) * 0.5, ax, yArc - 5);
         ctx.stroke();
 
-        // Top tick (Linear)
         ctx.fillStyle = PALETTE.faint;
         ctx.fillRect(lx - 1.5, yLinear - 6, 3, 12);
 
-        // Bottom tick (Equal Arc-Length)
         ctx.fillStyle = PALETTE.teal;
         ctx.beginPath();
         ctx.arc(ax, yArc, 4, 0, Math.PI * 2);
@@ -1316,16 +1473,22 @@
         ctx.fillStyle = PALETTE.muted;
         ctx.fillText(`s${i}`, ax - 6, yArc + 16);
       }
+      ctx.restore();
 
-      // Caption on top right
-      ctx.font = `500 10px ${CANVAS_SANS}`;
-      ctx.fillStyle = PALETTE.faint;
-      const rateHint = studioState.speakingRate < 0.85
-        ? "当前慢速拖音，等弧长刻度自动变疏"
-        : studioState.speakingRate > 1.15
-          ? "当前快速连读，高速段等弧长刻度自动加密"
-          : "标准语速，几何弧长均匀对齐";
-      ctx.fillText(rateHint, Math.max(padX, w - ctx.measureText(rateHint).width - 10), 14);
+      const hintAlpha = clamp01((progress - 0.68) / 0.24);
+      if (hintAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = hintAlpha;
+        ctx.font = `500 10px ${CANVAS_SANS}`;
+        ctx.fillStyle = PALETTE.faint;
+        const rateHint = studioState.speakingRate < 0.85
+          ? "当前慢速拖音，等弧长刻度自动变疏"
+          : studioState.speakingRate > 1.15
+            ? "当前快速连读，高速段等弧长刻度自动加密"
+            : "标准语速，几何弧长均匀对齐";
+        ctx.fillText(rateHint, Math.max(padX, w - ctx.measureText(rateHint).width - 10), 14);
+        ctx.restore();
+      }
     }
 
     // Track 4: continuous fingerprint ribbons instead of a wall of cells.
@@ -1350,6 +1513,13 @@
       const y1 = 44;
       const y2 = y1 + rowH + 20;
       const y3 = y2 + rowH + 20;
+      const progress = sectionProgress("fingerprint");
+      const revealX = padLeft + barW * progress;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padLeft, 0, Math.max(0, revealX - padLeft), h);
+      ctx.clip();
 
       // Thin partition accents replace header boxes.
       for (const seg of segments) {
@@ -1399,6 +1569,7 @@
         ctx.fillStyle = `rgba(${rgb}, ${alpha.toFixed(3)})`;
         ctx.fillRect(padLeft + ratio * barW, y3, stepW, matchH);
       }
+      ctx.restore();
 
       ctx.font = `600 9px ${CANVAS_MONO}`;
       ctx.fillStyle = PALETTE.inkSoft;
@@ -1460,6 +1631,7 @@
     // 5. DOM Readout Synchronizer & Interactive Controls
     // =========================================================================
     function renderAllUI(telemetry, pulsePhase = 0.0) {
+      if (!telemetry) return;
       drawTrack1(telemetry, pulsePhase);
       drawTrack2(telemetry, pulsePhase);
       drawTrack3(telemetry);
@@ -1585,7 +1757,7 @@
                 }
                 pushSingleFrame(r, wav[i]);
               }
-              renderAllUI(computeFullTelemetry());
+              renderCurrentSnapshot();
               showToast(`已加载遥测 JSON 快照: ${file.name}`);
             }
           } catch (err) {
@@ -1622,7 +1794,7 @@
             }
             pushSingleFrame(row, Math.sign(peak || 1.0) * Math.min(0.95, rms * 2.8));
           }
-          renderAllUI(computeFullTelemetry());
+          renderCurrentSnapshot();
           showToast(`已解码音频文件「${file.name}」并同步渲染四轨声学特征`);
         } catch (err) {
           showToast("音频解码完成，已注入四轨分析流");
@@ -1753,7 +1925,7 @@
           studioState.rawFrames[i] = studioState.rawFrames[j];
           studioState.rawFrames[j] = tmp;
         }
-        renderAllUI(computeFullTelemetry());
+        renderCurrentSnapshot();
         showToast("已执行帧置乱对照：静态质心不变，轨迹速度与指纹分应下降");
       });
 
@@ -1776,21 +1948,21 @@
         const val = parseFloat(e.target.value);
         studioState.evidenceWeight = val;
         document.getElementById("evWeightLabel").textContent = val.toFixed(2);
-        renderAllUI(computeFullTelemetry());
+        renderCurrentSnapshot();
       });
 
       document.getElementById("sliderMatchThreshold").addEventListener("input", (e) => {
         const val = parseFloat(e.target.value);
         studioState.matchThreshold = val;
         document.getElementById("threshValueLabel").textContent = val.toFixed(2);
-        renderAllUI(computeFullTelemetry());
+        renderCurrentSnapshot();
       });
 
       document.getElementById("sliderIouThreshold").addEventListener("input", (e) => {
         const val = parseFloat(e.target.value);
         studioState.iouThreshold = val;
         document.getElementById("iouValueLabel").textContent = val.toFixed(2);
-        renderAllUI(computeFullTelemetry());
+        renderCurrentSnapshot();
       });
 
       document.getElementById("btnToggleProjector").addEventListener("click", () => {
@@ -1805,12 +1977,12 @@
           btn.className = "soft-button is-off";
           showToast("已关闭说话人正交投影，音色干扰会直接混入轨迹");
         }
-        renderAllUI(computeFullTelemetry());
+        renderCurrentSnapshot();
       });
 
       document.getElementById("selectCompareTemplate").addEventListener("change", (e) => {
         studioState.selectedTemplateKey = e.target.value;
-        renderAllUI(computeFullTelemetry());
+        renderCurrentSnapshot();
       });
 
       // Mode 1: Dual-Tempo Enrollment Button
@@ -1846,7 +2018,7 @@
           studioState.selectedTemplateKey = key;
           studioState.activePhraseKey = key;
           refreshTemplateUI();
-          renderAllUI(computeFullTelemetry());
+          renderCurrentSnapshot();
           showToast(`已截取当前窗口 [${wStart}, ${wEnd}] 注册为「${key}」指纹模板`);
         }
       });
@@ -1858,28 +2030,31 @@
       const targets = Array.from(new Set(document.querySelectorAll(".showcase, [data-reveal]")));
       const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (reduceMotion || !("IntersectionObserver" in window)) {
+        completeAllSweeps();
         targets.forEach((target) => target.classList.add("is-inview"));
         return;
       }
 
       const observer = new IntersectionObserver((entries) => {
         for (const entry of entries) {
-          entry.target.classList.toggle("is-inview", entry.isIntersecting);
+          const visible = entry.isIntersecting;
+          entry.target.classList.toggle("is-inview", visible);
+          if (visible && entry.target.dataset.sweep) {
+            startSectionSweep(entry.target.dataset.sweep);
+          }
         }
       }, {
         rootMargin: "-6% 0px -10% 0px",
-        threshold: 0.08
+        threshold: 0.12
       });
 
       targets.forEach((target) => observer.observe(target));
     }
 
-    // The stream advances at 20 Hz, while the canvas redraws at display rate.
-    // streamCursor supplies the fractional frame offset, so motion never snaps between samples.
+    // The snapshot stays still. Only each section's reveal boundary advances.
     let lastFrameTime = performance.now();
-    let lastStreamFrameTime = lastFrameTime;
+    let lastAnimationTime = lastFrameTime;
     let frameCounter = 0;
-    let liveRng = createRng(99);
     let captureRng = createRng(99);
 
     function pushNextStreamFrame(rng) {
@@ -1897,6 +2072,8 @@
 
     function startOscilloscopeLoop() {
       function step(now) {
+        const elapsed = Math.min(50, Math.max(0, now - lastAnimationTime));
+        lastAnimationTime = now;
         frameCounter++;
         if (now - lastFrameTime >= 500) {
           studioState.fps = Math.min(60, Math.max(55, Math.round((frameCounter * 1000) / (now - lastFrameTime))));
@@ -1905,33 +2082,9 @@
           lastFrameTime = now;
         }
 
-        if (studioState.isPlaying) {
-          const elapsed = Math.min(50, Math.max(0, now - lastStreamFrameTime));
-          lastStreamFrameTime = now;
-          studioState.streamCursor += elapsed * 0.02;
-
-          let advances = Math.floor(studioState.streamCursor);
-          if (advances > 0) {
-            studioState.streamCursor -= advances;
-            while (advances > 0) {
-              studioState.frameStepCounter++;
-              if (studioState.injectionQueue.length === 0 && studioState.frameStepCounter % 105 === 0) {
-                queuePhraseUtterance(
-                  studioState.activePhraseKey,
-                  studioState.speakingRate,
-                  studioState.speakerNuisance,
-                  false
-                );
-              }
-              pushNextStreamFrame(liveRng);
-              advances--;
-            }
-          }
-        } else {
-          lastStreamFrameTime = now;
-        }
-
-        renderAllUI(computeFullTelemetry());
+        if (studioState.isPlaying) advanceSweeps(elapsed);
+        const telemetry = studioState.displayTelemetry || refreshDisplayTelemetry();
+        renderAllUI(telemetry);
         requestAnimationFrame(step);
       }
       requestAnimationFrame(step);
@@ -1960,8 +2113,9 @@
           pushNextStreamFrame(captureRng);
           studioState.frameStepCounter++;
         }
-        studioState.streamCursor = 0;
-        renderAllUI(computeFullTelemetry());
+        const telemetry = refreshDisplayTelemetry();
+        completeAllSweeps();
+        renderAllUI(telemetry);
         return studioState.frameStepCounter;
       }
 
@@ -1976,11 +2130,12 @@
         }
       };
 
-      renderAllUI(computeFullTelemetry());
+      completeAllSweeps();
+      renderCurrentSnapshot();
     }
 
     window.addEventListener("resize", () => {
-      if (studioState.lastTelemetry) renderAllUI(studioState.lastTelemetry);
+      if (studioState.displayTelemetry) renderAllUI(studioState.displayTelemetry);
     });
 
     window.addEventListener("load", () => {
@@ -1990,12 +2145,10 @@
 
       if (CAPTURE_MODE) {
         studioState.audioMuted = true;
-        studioState.streamCursor = 0;
         injectPhraseImmediate("吴语·侬好 (Wu)", false);
         queuePhraseUtterance("吴语·侬好 (Wu)", studioState.speakingRate, studioState.speakerNuisance, false);
         startCaptureMode();
       } else {
-        studioState.streamCursor = 0;
         injectPhraseImmediate("吴语·侬好 (Wu)", false);
         initScrollStory();
         startOscilloscopeLoop();
