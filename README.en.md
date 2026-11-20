@@ -16,8 +16,6 @@
 
 <p align="center"><strong>Turn a frozen speech trajectory into interpretable temporal views, with every operator shown live.</strong></p>
 
-<img align="right" width="190" src="docs/assets/logo.png" alt="Disentangle-Acoustic-Print logo" />
-
 ## The Running Interface
 
 <p align="center">
@@ -26,9 +24,9 @@
   </a>
 </p>
 
-<p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">Open Acoustic Print Studio</a></strong></p>
+<p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">▶ Open Acoustic Print Studio</a></strong></p>
 
-The animation is captured from the working page. The four tracks sit on one continuous scroll. When an act enters the viewport, its curve draws slowly from left to right, then rests on one complete utterance. Coordinates, peaks, and match bands stay fixed; the chart never slides sideways during the sweep. When the sweep finishes, a pan control appears below the figure. The chart is a two-segment static strip: the first viewport holds one complete utterance, and dragging the control right moves the whole chart left to reveal the next utterance's curves beyond the right edge. The default view keeps one primary action, the current phrase, and the four tracks. Tempo, timbre, threshold, and enrollment controls unfold on demand. The online Studio runs in the browser and supports microphone streaming, WAV drag-and-drop, a frame-shuffle control, dual-tempo enrollment, and telemetry export. The static page needs no backend and processes audio locally.
+The animation is captured from the live page. All four tracks run on one seamless panoramic scroll without mid-chart breaks: after the opening sweep completes, you can drag directly on any chart or slide the pan bar to glide smoothly across the continuous 240-frame trajectory. Both the hero and sticky topbar feature a prominent live microphone button that drives all four tracks at 60 FPS purely in-browser—complete with freeze-to-inspect, one-click voice enrollment, WAV drag-and-drop, frame-shuffle controls, and telemetry JSON export with zero audio upload.
 
 All four tracks read the same telemetry packet.
 

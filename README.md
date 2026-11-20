@@ -16,8 +16,6 @@
 
 <p align="center"><strong>把一段冻结语音轨迹拆成可以解释的时序视图，并让每个算子实时显示出来。</strong></p>
 
-<img align="right" width="190" src="docs/assets/logo.png" alt="Disentangle-Acoustic-Print logo" />
-
 ## 正在运行的界面
 
 <p align="center">
@@ -26,9 +24,9 @@
   </a>
 </p>
 
-<p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">进入在线 Acoustic Print Studio</a></strong></p>
+<p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">▶ 进入在线 Acoustic Print Studio</a></strong></p>
 
-这段动图直接截自真实页面。四轨结果放在一条连续长卷轴里，每幕进入视口后，曲线从左向右缓慢绘制，最后停在完整的一轮发音上。坐标、峰位与匹配区间保持固定，画面不会横向漂移。绘制结束后，每幅图下方出现一条平移滑条。图表本身是一张两段连续静态长卷，首屏停在一轮完整发音上；向右拖动滑条，整张图向左移动，露出右边界之后的下一段语音曲线。界面默认保留一个主操作、当前口令和四轨结果，语速、音色、阈值与录入入口按需展开。在线版在浏览器内运行，支持麦克风流、拖入 WAV、帧置乱对照、双语速注册和遥测 JSON 导出。静态页面不需要后端，音频在本地处理。
+这段动图截自真实运行页面。四轨结果排布在一条无断层的连续全景长卷轴上：首屏平滑绘制完当前发音后，你可以直接在图表上左右拖拽或滑动下方平移条，无缝浏览整段 240 帧连续声学轨迹。首屏与顶部导航栏均提供显眼的实时麦克风入口，开口说话即可在纯浏览器本地以 60 FPS 驱动波形速度着色、动力学变点、等弧长标尺与四层指纹纹理，并支持一键冻结观察、录入个人口令、拖入 WAV 与导出遥测 JSON，音频全程不上传。
 
 四轨把同一份遥测数据拆成四种观察方式。
 
