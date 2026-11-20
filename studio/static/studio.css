@@ -2093,3 +2093,419 @@ body {
     font-size: clamp(32px, 9.7vw, 42px);
   }
 }
+
+/* -------------------------------------------------------------------------
+   Seamless panoramic stages, pinned overlays & prominent live microphone UX
+   ------------------------------------------------------------------------- */
+.compact-button--mic {
+  color: var(--coral);
+  border-color: rgba(230, 106, 78, 0.24);
+  background: rgba(255, 240, 236, 0.78);
+  padding: 0 13px;
+}
+
+.compact-button--mic:hover {
+  background: #fff0ec;
+  border-color: rgba(230, 106, 78, 0.45);
+}
+
+.compact-button--mic svg {
+  width: 13px;
+  height: 13px;
+}
+
+.compact-button--mic .mic-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--coral);
+  opacity: 0.75;
+  transition: transform 240ms var(--ease), box-shadow 240ms var(--ease);
+}
+
+.compact-button--mic.is-on {
+  color: #fff;
+  background: linear-gradient(135deg, #e6553b 0%, #d93b52 100%);
+  border-color: transparent;
+  box-shadow: 0 4px 16px rgba(230, 85, 59, 0.30);
+}
+
+.compact-button--mic.is-on .mic-dot {
+  background: #fff;
+  opacity: 1;
+  animation: mic-dot-pulse 1.3s ease-in-out infinite;
+}
+
+.btn--mic {
+  position: relative;
+  min-height: 46px;
+  padding: 0 22px;
+  color: #fff;
+  background: linear-gradient(135deg, #e85d3f 0%, #d93f5a 100%);
+  box-shadow: 0 8px 24px rgba(230, 88, 63, 0.28), 0 1px 2px rgba(0, 0, 0, 0.08);
+  overflow: visible;
+}
+
+.btn--mic:hover {
+  background: linear-gradient(135deg, #ef6648 0%, #e04661 100%);
+  box-shadow: 0 12px 30px rgba(230, 88, 63, 0.36), 0 2px 4px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.btn--mic__pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(232, 93, 63, 0.42);
+  pointer-events: none;
+  animation: mic-ring-idle 2.8s var(--ease) infinite;
+}
+
+.btn--mic.is-on {
+  background: linear-gradient(135deg, #1d1d1f 0%, #3a3a40 100%);
+  box-shadow: 0 8px 26px rgba(29, 29, 31, 0.22);
+}
+
+.btn--mic.is-on .btn--mic__pulse {
+  border-color: rgba(232, 93, 63, 0.72);
+  animation: mic-ring-active 1.35s ease-out infinite;
+}
+
+@keyframes mic-ring-idle {
+  0%, 100% { opacity: 0.12; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(1.03, 1.12); }
+}
+
+@keyframes mic-ring-active {
+  0% { opacity: 0.8; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.09, 1.32); }
+}
+
+@keyframes mic-dot-pulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.65); }
+  50% { transform: scale(1.18); box-shadow: 0 0 0 5px rgba(255, 255, 255, 0); }
+}
+
+.mic-callout {
+  max-width: 720px;
+  margin: 22px auto 0;
+  padding: 10px 16px;
+  border: 1px solid rgba(230, 106, 78, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.028);
+  transition: border-color 260ms var(--ease), background-color 260ms var(--ease), box-shadow 260ms var(--ease);
+}
+
+.mic-callout.is-live {
+  border-color: rgba(230, 106, 78, 0.42);
+  background: rgba(255, 245, 242, 0.92);
+  box-shadow: 0 8px 26px rgba(230, 106, 78, 0.12);
+}
+
+.mic-callout__badge {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(230, 106, 78, 0.12);
+  color: var(--coral);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.mic-callout__text {
+  line-height: 1.5;
+  text-align: left;
+}
+
+/* Seamless stage panning & soft edge feathering */
+.stage {
+  border-radius: 18px;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 2.2%, #000 97.8%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 2.2%, #000 97.8%, transparent 100%);
+}
+
+.stage.is-pannable {
+  cursor: grab;
+}
+
+.stage.is-dragging {
+  cursor: grabbing;
+}
+
+.stage--ruler,
+.stage--barcode {
+  -webkit-mask-image: linear-gradient(to right, #000 0%, #000 97.5%, transparent 100%);
+  mask-image: linear-gradient(to right, #000 0%, #000 97.5%, transparent 100%);
+}
+
+/* Pinned left-edge labels for Tracks 3 & 4 so they stay legible while panning */
+.stage-pinned {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 4;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.stage-pinned--ruler {
+  width: 68px;
+  padding: 24px 0 22px 8px;
+  background: linear-gradient(to right, rgba(245, 245, 247, 0.96) 58%, rgba(245, 245, 247, 0) 100%);
+}
+
+.stage-pinned__tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.stage-pinned__tag--linear {
+  color: var(--faint);
+}
+
+.stage-pinned__tag--arc {
+  color: var(--teal);
+}
+
+.stage-pinned--barcode {
+  width: 84px;
+  padding: 0 0 0 6px;
+  background: linear-gradient(to right, rgba(245, 245, 247, 0.96) 66%, rgba(245, 245, 247, 0) 100%);
+  justify-content: flex-start;
+}
+
+.stage-pinned__row {
+  position: absolute;
+  left: 6px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.stage-pinned__row--query {
+  color: var(--ink-soft);
+  top: 62px;
+}
+
+.stage-pinned__row--tmpl {
+  color: var(--blue);
+  top: 118px;
+}
+
+.stage-pinned__row--match {
+  color: var(--faint);
+  top: 164px;
+}
+
+/* Floating glassmorphic live microphone dock */
+.mic-dock {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  z-index: 55;
+  transform: translateX(-50%);
+  width: min(760px, calc(100vw - 28px));
+  padding: 12px 16px;
+  border: 1px solid rgba(230, 106, 78, 0.24);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 16px 46px rgba(29, 29, 31, 0.14), 0 2px 8px rgba(230, 106, 78, 0.08);
+  backdrop-filter: saturate(180%) blur(22px);
+  -webkit-backdrop-filter: saturate(180%) blur(22px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  animation: dock-enter 380ms var(--ease);
+}
+
+.mic-dock[hidden] {
+  display: none;
+}
+
+@keyframes dock-enter {
+  from { opacity: 0; transform: translate(-50%, 16px) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+.mic-dock__status {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.mic-dock__pulse {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 0 0 rgba(230, 106, 78, 0.55);
+  animation: mic-dock-beat 1.4s ease-out infinite;
+}
+
+.mic-dock.is-frozen .mic-dock__pulse {
+  background: var(--amber);
+  animation: none;
+  box-shadow: 0 0 0 4px rgba(183, 121, 31, 0.14);
+}
+
+@keyframes mic-dock-beat {
+  0% { box-shadow: 0 0 0 0 rgba(230, 106, 78, 0.55); }
+  70% { box-shadow: 0 0 0 9px rgba(230, 106, 78, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(230, 106, 78, 0); }
+}
+
+.mic-dock__meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mic-dock__meta strong {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mic-dock__meta span {
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mic-dock__vu {
+  flex: 0 0 auto;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+}
+
+.mic-dock__vu span {
+  width: 3px;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--coral) 0%, var(--blue) 100%);
+  transition: height 65ms linear, opacity 120ms linear;
+  opacity: 0.45;
+}
+
+.mic-dock__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.mic-dock__btn {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 560;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 200ms var(--ease), border-color 200ms var(--ease), transform 180ms var(--ease);
+}
+
+.mic-dock__btn:hover {
+  background: var(--canvas);
+  border-color: var(--line-strong);
+}
+
+.mic-dock__btn:active {
+  transform: scale(0.97);
+}
+
+.mic-dock__btn--accent {
+  color: #fff;
+  background: var(--blue);
+  border-color: transparent;
+}
+
+.mic-dock__btn--accent:hover {
+  background: #0077ed;
+  border-color: transparent;
+}
+
+.mic-dock__btn--danger {
+  color: var(--coral);
+  background: var(--coral-soft);
+  border-color: rgba(230, 106, 78, 0.22);
+}
+
+.mic-dock__btn--danger:hover {
+  background: #ffe3dc;
+}
+
+.capture-mode .mic-dock,
+.capture-mode .btn--mic__pulse {
+  display: none !important;
+}
+
+body.is-mic-active .toast {
+  bottom: 92px;
+}
+
+@media (max-width: 760px) {
+  body.is-mic-active .toast {
+    bottom: 126px;
+  }
+  .mic-callout {
+    border-radius: 16px;
+    padding: 10px 14px;
+    font-size: 11.5px;
+  }
+
+  .mic-dock {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px;
+    bottom: 14px;
+  }
+
+  .mic-dock__vu {
+    display: none;
+  }
+
+  .mic-dock__actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .compact-button--mic span:last-child {
+    display: none;
+  }
+}

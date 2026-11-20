@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&amp;family=Noto+Sans+SC:wght@400..700&amp;family=Roboto+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230071e3'/%3E%3Cpath d='M4 12h3l2-5 3 10 2.5-7 1.5 4H20' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="static/studio.css?v=pan-20261117" />
+  <link rel="stylesheet" href="static/studio.css?v=seamless-20261120" />
 </head>
 <body>
   <header class="topbar">
@@ -26,6 +26,14 @@
       </a>
 
       <div class="topbar__meta">
+        <button id="btnTopMic" type="button" class="compact-button compact-button--mic" title="开启或关闭实时麦克风分析">
+          <span class="mic-dot" aria-hidden="true"></span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" />
+          </svg>
+          <span id="topMicLabel">实时麦克风</span>
+        </button>
         <span class="live-pill">
           <span id="streamStatusDot" class="status-dot is-live" aria-hidden="true"></span>
           <span id="streamStatusLabel">实时演示</span>
@@ -50,37 +58,43 @@
         <p class="eyebrow">White-box speech analysis</p>
         <h1 id="hero-title">把解耦过程，<br /><span>放回声音本身。</span></h1>
         <p class="hero__lede">
-          冻结声学轨迹，剥离说话人音色，观察内容如何穿过语速变化。向下滑动，四层证据依次出现。
+          冻结声学轨迹，剥离说话人音色，观察内容如何穿过语速变化。开启麦克风直接开口说话，或向下滑动逐层查看四轨证据。
         </p>
         <div class="hero__actions">
+          <button id="btnMicStream" type="button" class="btn btn--mic" title="开启实时麦克风输入，直接驱动四轨算法可视化">
+            <span class="btn--mic__pulse" aria-hidden="true"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="11" rx="3" />
+              <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" />
+            </svg>
+            <span id="micLabel">开启实时麦克风分析</span>
+          </button>
           <button id="btnAutoDemoPhrase" type="button" class="btn btn--primary">
             <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6.4 3.6a1 1 0 0 1 1.52-.86l8.1 5.14a1 1 0 0 1 0 1.7l-8.1 5.15a1 1 0 0 1-1.52-.85V3.6Z" /></svg>
-            <span>播放入口令</span>
+            <span>播放演示口令</span>
           </button>
           <button id="btnOpenEnrollment" type="button" class="btn btn--secondary" aria-expanded="false" aria-controls="enrollmentPanel">录入新口令</button>
           <button id="btnOpenAdvanced" type="button" class="btn btn--quiet" aria-expanded="false" aria-controls="advancedPanel">高级参数</button>
         </div>
 
+        <div class="mic-callout" id="heroMicCallout">
+          <span class="mic-callout__badge">LOCAL LIVE</span>
+          <span class="mic-callout__text">纯浏览器本地 60 FPS 声学特征解耦，音频不上传云端，开口即见波形、速度、等弧长标尺与指纹热力纹实时响应。</span>
+        </div>
+
         <div class="phrase-rail">
           <div class="phrase-rail__head">
-            <span>从一个口令开始</span>
+            <span>或选择一个预设口令</span>
             <span id="enrollBankCount" class="phrase-rail__meta">模板库 4 项</span>
           </div>
           <div id="phraseButtonsContainer" class="phrase-list"></div>
           <div class="hero__toolbar">
-            <button id="btnMicStream" type="button" class="tool-button" title="开启或关闭麦克风输入">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="9" y="3" width="6" height="11" rx="3" />
-                <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" />
-              </svg>
-              <span id="micLabel">开启麦克风</span>
-            </button>
             <label for="wavUploadInput" class="tool-button" title="导入 WAV 或遥测 JSON">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" />
                 <path d="M5 15.5v2A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-2" />
               </svg>
-              <span>导入音频</span>
+              <span>导入音频 / JSON</span>
               <input id="wavUploadInput" type="file" accept=".wav,audio/wav,.json,application/json" class="sr-only" />
             </label>
             <button id="btnAudioMute" type="button" class="tool-button" title="切换发音合成监听音效">
@@ -201,14 +215,14 @@
         </div>
         <p class="showcase__lede">波形按局部变化速度着色，匹配区间以柔和的光带标出。没有阈值框，只有声音在这里发生的位置。</p>
       </div>
-      <div class="stage stage--wave"><canvas id="canvasTrack1"></canvas></div>
+      <div class="stage stage--wave" data-pan-stage="wave"><canvas id="canvasTrack1"></canvas></div>
       <div class="stage-scrub" data-scrub-shell="wave" hidden>
-        <span class="stage-scrub__label">拖动平移</span>
+        <span class="stage-scrub__label">横向全景浏览</span>
         <input id="scrubWave" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="wave" aria-label="横向平移完整波形图表" />
         <span class="stage-scrub__value" data-scrub-readout="wave">0%</span>
       </div>
       <div class="stage-foot">
-        <span class="stage-note">多尺度 Temporal-IoU NMS · 局部速度着色</span>
+        <span class="stage-note">多尺度 Temporal-IoU NMS · 局部速度着色 · 支持图表拖拽平移</span>
         <div class="legend-row">
           <span class="legend legend--blue"><span class="legend__swatch"></span>平稳</span>
           <span class="legend legend--coral"><span class="legend__swatch"></span>转折</span>
@@ -228,9 +242,9 @@
           <p id="track2MetricsBadge" class="showcase__metric">主峰 0.32 · 次峰 0.68 · 变点 0.45</p>
         </div>
       </div>
-      <div class="stage stage--curve"><canvas id="canvasTrack2"></canvas></div>
+      <div class="stage stage--curve" data-pan-stage="kinematics"><canvas id="canvasTrack2"></canvas></div>
       <div class="stage-scrub" data-scrub-shell="kinematics" hidden>
-        <span class="stage-scrub__label">拖动平移</span>
+        <span class="stage-scrub__label">横向全景浏览</span>
         <input id="scrubKinematics" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="kinematics" aria-label="横向平移完整速度曲线图表" />
         <span class="stage-scrub__value" data-scrub-readout="kinematics">0%</span>
       </div>
@@ -256,7 +270,13 @@
         </div>
       </div>
       <div class="stage-row">
-        <div class="stage stage--ruler"><canvas id="canvasTrack3"></canvas></div>
+        <div class="stage stage--ruler" data-pan-stage="tempo">
+          <div class="stage-pinned stage-pinned--ruler" aria-hidden="true">
+            <span class="stage-pinned__tag stage-pinned__tag--linear">Linear</span>
+            <span class="stage-pinned__tag stage-pinned__tag--arc">ArcLen</span>
+          </div>
+          <canvas id="canvasTrack3"></canvas>
+        </div>
         <div class="stripping">
           <span class="stripping__label">说话人子空间投影能量</span>
           <div class="meter" aria-label="音色剥离能量计">
@@ -270,7 +290,7 @@
         </div>
       </div>
       <div class="stage-scrub" data-scrub-shell="tempo" hidden>
-        <span class="stage-scrub__label">拖动平移</span>
+        <span class="stage-scrub__label">横向全景浏览</span>
         <input id="scrubTempo" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="tempo" aria-label="横向平移完整等弧长刻度图表" />
         <span class="stage-scrub__value" data-scrub-readout="tempo">0%</span>
       </div>
@@ -294,9 +314,16 @@
           </div>
         </div>
       </div>
-      <div class="stage stage--barcode"><canvas id="canvasTrack4"></canvas></div>
+      <div class="stage stage--barcode" data-pan-stage="fingerprint">
+        <div class="stage-pinned stage-pinned--barcode" aria-hidden="true">
+          <span class="stage-pinned__row stage-pinned__row--query">当前指纹</span>
+          <span class="stage-pinned__row stage-pinned__row--tmpl">模板指纹</span>
+          <span class="stage-pinned__row stage-pinned__row--match">逐维共振</span>
+        </div>
+        <canvas id="canvasTrack4"></canvas>
+      </div>
       <div class="stage-scrub" data-scrub-shell="fingerprint" hidden>
-        <span class="stage-scrub__label">拖动平移</span>
+        <span class="stage-scrub__label">横向全景浏览</span>
         <input id="scrubFingerprint" class="scrubber" type="range" min="0" max="1000" step="1" value="0" data-scrub-key="fingerprint" aria-label="横向平移完整指纹图表" />
         <span class="stage-scrub__value" data-scrub-readout="fingerprint">0%</span>
       </div>
@@ -321,11 +348,29 @@
     </footer>
   </main>
 
+  <aside id="liveMicDock" class="mic-dock" aria-label="实时麦克风控制台" hidden>
+    <div class="mic-dock__status">
+      <span class="mic-dock__pulse" aria-hidden="true"></span>
+      <div class="mic-dock__meta">
+        <strong id="micDockTitle">实时麦克风采集中</strong>
+        <span id="micDockSub">开口说话，四轨声学解耦视图将实时跟随</span>
+      </div>
+    </div>
+    <div id="micLevelBars" class="mic-dock__vu" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+    <div class="mic-dock__actions">
+      <button id="btnMicFreeze" type="button" class="mic-dock__btn">冻结观察</button>
+      <button id="btnMicQuickEnroll" type="button" class="mic-dock__btn mic-dock__btn--accent">录入当前语音</button>
+      <button id="btnMicStop" type="button" class="mic-dock__btn mic-dock__btn--danger">关闭</button>
+    </div>
+  </aside>
+
   <div id="studioToast" class="toast" role="status" aria-live="polite">
     <span class="toast__dot" aria-hidden="true"></span>
     <span id="studioToastText">系统就绪</span>
   </div>
 
-  <script src="static/studio.js?v=pan-20261117" defer></script>
+  <script src="static/studio.js?v=seamless-20261120" defer></script>
 </body>
 </html>

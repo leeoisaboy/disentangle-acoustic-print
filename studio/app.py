@@ -10,6 +10,7 @@ Supports both:
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
 
@@ -33,14 +34,20 @@ def inline_studio_html() -> str:
     css_path = STATIC_DIR / "studio.css"
     js_path = STATIC_DIR / "studio.js"
     if css_path.exists():
-        html = html.replace(
-            '<link rel="stylesheet" href="static/studio.css" />',
-            f"<style>{css_path.read_text(encoding='utf-8')}</style>",
+        css_text = css_path.read_text(encoding="utf-8")
+        html = re.sub(
+            r'<link\s+rel="stylesheet"\s+href="static/studio\.css(?:\?[^"]*)?"\s*/?>',
+            lambda _: f"<style>{css_text}</style>",
+            html,
+            count=1,
         )
     if js_path.exists():
-        html = html.replace(
-            '<script src="static/studio.js" defer></script>',
-            f"<script>{js_path.read_text(encoding='utf-8')}</script>",
+        js_text = js_path.read_text(encoding="utf-8")
+        html = re.sub(
+            r'<script\s+src="static/studio\.js(?:\?[^"]*)?"(?:\s+defer)?></script>',
+            lambda _: f"<script>{js_text}</script>",
+            html,
+            count=1,
         )
     return html
 

@@ -404,7 +404,7 @@
     // 2. Studio State & Rolling Acoustic Stream Engine
     // =========================================================================
     const STUDIO_CONFIG = {
-      maxFrames: 120,
+      maxFrames: 240,
       dimension: 12,
       outputLength: 8,
       baseWindowLength: 16,
@@ -412,10 +412,15 @@
       hop: 2
     };
 
+    const MIC_FRAME_STEP_MS = 28;
+
     const studioState = {
       isPlaying: true,
       captureMode: CAPTURE_MODE,
       micActive: false,
+      micSimulated: false,
+      micVoiceDetected: false,
+      micLevel: 0.0,
       audioMuted: false,
       projectorEnabled: true,
       speakingRate: 1.25,
@@ -425,10 +430,11 @@
       iouThreshold: 0.40,
       selectedTemplateKey: "吴语·侬好 (Wu)",
       activePhraseKey: "吴语·侬好 (Wu)",
+      continuationKey: "粤语·唔该 (Cantonese)",
       frameStepCounter: 0,
       lastComputeMs: 0.18,
       fps: 60,
-      // Rolling buffers
+      // Rolling 240-frame panoramic buffers (2x viewport width, 100% seamless)
       rawFrames: [],
       waveform: new Float64Array(STUDIO_CONFIG.maxFrames),
       // Speaker subspace basis (2 orthogonal nuisance axes in R^D)
@@ -444,6 +450,11 @@
       lastTelemetry: null,
       smoothedTelemetry: null,
       displayTelemetry: null,
+      liveVisualSmooth: {
+        removedRatio: null,
+        arcPositions: null,
+        barcodeVector: null
+      },
       sweepDurationMs: SWEEP_DURATION_MS,
       sweeps: {
         wave: { elapsed: 0, active: false, started: false },
@@ -452,10 +463,10 @@
         fingerprint: { elapsed: 0, active: false, started: false }
       },
       scrubs: {
-        wave: { position: 0.0 },
-        kinematics: { position: 0.0 },
-        tempo: { position: 0.0 },
-        fingerprint: { position: 0.0 }
+        wave: { position: 0.0, velocity: 0.0 },
+        kinematics: { position: 0.0, velocity: 0.0 },
+        tempo: { position: 0.0, velocity: 0.0 },
+        fingerprint: { position: 0.0, velocity: 0.0 }
       }
     };
 
@@ -721,12 +732,85 @@
         if (kept.every(k => temporalIoU(cand.start, cand.end, k.start, k.end) <= studioState.iouThreshold)) {
           kept.push(cand);
         }
-        if (kept.length >= 3) break;
+        if (kept.length >= 4) break;
       }
       return kept;
     }
 
-    // Build full white-box telemetry snapshot for the 4 tracks
+    function findPeakEnergyWindow(working, winLen = 28, preferRecent = false) {
+      const T = working.length;
+      if (T <= winLen) return [0, T];
+      const searchStart = preferRecent ? Math.floor(T * 0.45) : 0;
+      let bestStart = Math.max(0, T - winLen);
+      let bestEnergy = -1;
+      for (let start = searchStart; start <= T - winLen; start += 2) {
+        let energy = 0.0;
+        for (let i = start; i < start + winLen - 1; i++) {
+          const a = working[i];
+          const b = working[i + 1];
+          for (let d = 0; d < a.length; d++) {
+            const diff = b[d] - a[d];
+            energy += diff * diff;
+          }
+        }
+        if (energy > bestEnergy) {
+          bestEnergy = energy;
+          bestStart = start;
+        }
+      }
+      return [bestStart, bestStart + winLen];
+    }
+
+    function applyLiveVisualSmoothing(telemetry) {
+      if (!studioState.micActive) {
+        studioState.liveVisualSmooth.removedRatio = null;
+        studioState.liveVisualSmooth.arcPositions = null;
+        studioState.liveVisualSmooth.barcodeVector = null;
+        return telemetry;
+      }
+      const alpha = 0.24;
+      const smooth = studioState.liveVisualSmooth;
+
+      if (smooth.removedRatio === null) {
+        smooth.removedRatio = telemetry.projInfo.removedRatio;
+      } else {
+        smooth.removedRatio += (telemetry.projInfo.removedRatio - smooth.removedRatio) * alpha;
+      }
+      telemetry.projInfo = {
+        ...telemetry.projInfo,
+        removedRatio: smooth.removedRatio,
+        retainedRatio: 1.0 - smooth.removedRatio
+      };
+
+      const rawArc = telemetry.arcRuler.arcPositions;
+      if (!smooth.arcPositions || smooth.arcPositions.length !== rawArc.length) {
+        smooth.arcPositions = Float64Array.from(rawArc);
+      } else {
+        for (let i = 0; i < rawArc.length; i++) {
+          smooth.arcPositions[i] += (rawArc[i] - smooth.arcPositions[i]) * alpha;
+        }
+      }
+      telemetry.arcRuler = {
+        ...telemetry.arcRuler,
+        arcPositions: Float64Array.from(smooth.arcPositions)
+      };
+
+      const rawVec = telemetry.barcode.vector;
+      if (!smooth.barcodeVector || smooth.barcodeVector.length !== rawVec.length) {
+        smooth.barcodeVector = Float64Array.from(rawVec);
+      } else {
+        for (let i = 0; i < rawVec.length; i++) {
+          smooth.barcodeVector[i] += (rawVec[i] - smooth.barcodeVector[i]) * alpha;
+        }
+      }
+      telemetry.barcode = {
+        ...telemetry.barcode,
+        vector: Float64Array.from(smooth.barcodeVector)
+      };
+      return telemetry;
+    }
+
+    // Build full white-box telemetry snapshot for the 4 tracks (unified panoramic buffer)
     function computeFullTelemetry(rawFrames = null, waveform = null, record = true) {
       const t0 = performance.now();
       const raw = rawFrames || studioState.rawFrames;
@@ -754,22 +838,45 @@
 
       const activeMatches = runOnlineMatcher(working);
 
-      // Focus window for Track 3 arc-length ruler & Track 4 barcode: top match or middle window
-      let focusStart = Math.floor(T * 0.35);
-      let focusEnd = Math.min(T, focusStart + 24);
-      if (activeMatches.length > 0) {
-        focusStart = activeMatches[0].start;
-        focusEnd = activeMatches[0].end;
+      // Focus window for Track 3 arc-length ruler & Track 4 barcode
+      let focusStart = Math.floor(T * 0.16);
+      let focusEnd = Math.min(T, focusStart + 28);
+      if (studioState.micActive) {
+        const recentMatch = activeMatches.find(m => m.end >= Math.floor(T * 0.5));
+        if (recentMatch) {
+          focusStart = recentMatch.start;
+          focusEnd = recentMatch.end;
+        } else {
+          [focusStart, focusEnd] = findPeakEnergyWindow(working, 28, true);
+        }
+      } else if (activeMatches.length > 0) {
+        const primaryMatch = activeMatches.find(m => m.start < Math.floor(T * 0.5)) || activeMatches[0];
+        focusStart = primaryMatch.start;
+        focusEnd = primaryMatch.end;
+      } else {
+        [focusStart, focusEnd] = findPeakEnergyWindow(working, 28, false);
       }
       const focusSlice = working.slice(focusStart, focusEnd);
 
+      // Extended continuous slice for panoramic Track 3 ruler (17 ticks across the active flow)
+      const rulerSpan = Math.min(T, Math.max(44, Math.floor(T * 0.45)));
+      const rulerCenter = Math.floor((focusStart + focusEnd) * 0.5);
+      const rulerStart = Math.max(0, Math.min(T - rulerSpan, rulerCenter - Math.floor(rulerSpan * 0.35)));
+      const rulerSlice = working.slice(rulerStart, rulerStart + rulerSpan);
+
       const streamEv = extractEvidence(working);
       const focusEv = extractEvidence(focusSlice.length >= 4 ? focusSlice : working);
-      const arcRuler = computeArcLengthPositions(focusSlice.length >= 4 ? focusSlice : working, STUDIO_CONFIG.outputLength + 1);
-      const barcode = computeFingerprintWithSegments(focusSlice.length >= 4 ? focusSlice : working, STUDIO_CONFIG.outputLength);
+      const arcRuler = computeArcLengthPositions(
+        rulerSlice.length >= 4 ? rulerSlice : working,
+        STUDIO_CONFIG.outputLength * 2 + 1
+      );
+      const barcode = computeFingerprintWithSegments(
+        focusSlice.length >= 4 ? focusSlice : working,
+        STUDIO_CONFIG.outputLength
+      );
 
       const elapsed = performance.now() - t0;
-      const telemetry = {
+      const telemetry = applyLiveVisualSmoothing({
         frameCount: T,
         dimension: STUDIO_CONFIG.dimension,
         waveform: Float64Array.from(waveSource),
@@ -782,8 +889,9 @@
         focusWindow: [focusStart, focusEnd],
         arcRuler,
         projInfo,
-        barcode
-      };
+        barcode,
+        continuationKey: studioState.continuationKey
+      });
       if (record) {
         studioState.lastComputeMs = 0.12 + 0.88 * Math.min(elapsed, 0.95);
         studioState.lastTelemetry = telemetry;
@@ -791,50 +899,11 @@
       return telemetry;
     }
 
-    function buildContinuationSequence() {
-      const keys = Array.from(studioState.templates.keys());
-      if (keys.length === 0) return null;
-      const currentIndex = Math.max(0, keys.indexOf(studioState.selectedTemplateKey));
-      const key = keys[(currentIndex + 1) % keys.length];
-      const seed = 523 + currentIndex * 71;
-      const { frames, wave } = generatePhraseTrajectory(
-        key,
-        STUDIO_CONFIG.baseWindowLength,
-        studioState.speakingRate,
-        studioState.speakerNuisance,
-        seed
-      );
-      const D = STUDIO_CONFIG.dimension;
-      const rng = createRng(seed + 19);
-      const paddedFrames = [];
-      const paddedWave = new Float64Array(frames.length + 10);
-      const pushQuiet = (slot) => {
-        const quiet = new Float64Array(D);
-        for (let d = 0; d < D; d++) quiet[d] = 0.014 * rng.nextGaussian();
-        paddedFrames.push(quiet);
-        paddedWave[slot] = 0.010 * rng.nextGaussian();
-      };
-      for (let i = 0; i < 4; i++) pushQuiet(i);
-      for (let i = 0; i < frames.length; i++) {
-        paddedFrames.push(frames[i]);
-        paddedWave[4 + i] = wave[i];
-      }
-      for (let i = 0; i < 6; i++) pushQuiet(4 + frames.length + i);
-      return { key, frames: paddedFrames, wave: paddedWave };
-    }
-
-    // Presentation frames read one frozen snapshot. Only the reveal boundary moves.
+    // Presentation frames read one unified panoramic snapshot; live mic updates it at 60fps.
     function refreshDisplayTelemetry(restartSweeps = false) {
       const telemetry = computeFullTelemetry();
-      const continuation = buildContinuationSequence();
-      if (continuation) {
-        const nextTelemetry = computeFullTelemetry(continuation.frames, continuation.wave, false);
-        nextTelemetry.continuationKey = continuation.key;
-        telemetry.continuation = nextTelemetry;
-        telemetry.continuationKey = continuation.key;
-      }
       studioState.displayTelemetry = telemetry;
-      if (restartSweeps) {
+      if (restartSweeps && !studioState.micActive) {
         resetScrubs();
         restartActiveSweeps();
       }
@@ -853,7 +922,14 @@
     let audioCtx = null;
     let micStreamObj = null;
     let micAnalyser = null;
-    let micScriptTimer = null;
+    let micFreqData = null;
+    let micTimeData = null;
+    let micBandEdges = null;
+    let micNoiseFloor = null;
+    let micEmaRow = null;
+    let micEmaWave = 0.0;
+    let micStepAccumMs = 0.0;
+    let micSimRng = createRng(701);
 
     function ensureAudioContext() {
       if (!audioCtx) {
@@ -864,6 +940,93 @@
         audioCtx.resume();
       }
       return audioCtx;
+    }
+
+    function buildLogBandEdges(sampleRate, fftSize, numBands) {
+      const binHz = sampleRate / fftSize;
+      const maxBin = Math.floor(fftSize / 2) - 1;
+      const fMin = 85;
+      const fMax = Math.min(7600, sampleRate * 0.44);
+      const edges = [];
+      for (let i = 0; i <= numBands; i++) {
+        const ratio = i / numBands;
+        const freq = fMin * Math.pow(fMax / fMin, ratio);
+        const bin = Math.max(1, Math.min(maxBin, Math.round(freq / binHz)));
+        edges.push(bin);
+      }
+      return edges;
+    }
+
+    function updateMicControlsUI() {
+      const heroBtn = document.getElementById("btnMicStream");
+      const heroLabel = document.getElementById("micLabel");
+      const topBtn = document.getElementById("btnTopMic");
+      const topLabel = document.getElementById("topMicLabel");
+      const callout = document.getElementById("heroMicCallout");
+      const dock = document.getElementById("liveMicDock");
+      const freezeBtn = document.getElementById("btnMicFreeze");
+      const dockTitle = document.getElementById("micDockTitle");
+      const dockSub = document.getElementById("micDockSub");
+      const statusDot = document.getElementById("streamStatusDot");
+      const statusLabel = document.getElementById("streamStatusLabel");
+
+      const active = studioState.micActive;
+      const frozen = active && !studioState.isPlaying;
+
+      document.body.classList.toggle("is-mic-active", active);
+      if (heroBtn) heroBtn.classList.toggle("is-on", active);
+      if (heroLabel) {
+        heroLabel.textContent = !active
+          ? "开启实时麦克风分析"
+          : (studioState.micSimulated ? "停止仿真麦克风流" : "正在实时分析 · 点击关闭");
+      }
+      if (topBtn) topBtn.classList.toggle("is-on", active);
+      if (topLabel) topLabel.textContent = active ? "采集中" : "实时麦克风";
+      if (callout) callout.classList.toggle("is-live", active);
+
+      if (dock) {
+        dock.hidden = !active;
+        dock.classList.toggle("is-frozen", frozen);
+      }
+      if (freezeBtn) freezeBtn.textContent = frozen ? "恢复实时" : "冻结观察";
+      if (dockTitle && dockSub && active) {
+        if (frozen) {
+          dockTitle.textContent = "已冻结当前语音窗口";
+          dockSub.textContent = "可直接在四轨图表上左右拖拽，细看刚刚录下的声学解耦轨迹";
+        } else if (studioState.micSimulated) {
+          dockTitle.textContent = "仿真麦克风实时语流中";
+          dockSub.textContent = "未检测到物理麦克风权限，已以 60 FPS 连续语音流驱动四轨解耦";
+        } else if (studioState.micVoiceDetected) {
+          dockTitle.textContent = "检测到语音输入 · 正在实时解耦";
+          dockSub.textContent = "波形速度、动力学变点、等弧长标尺与指纹热力纹正同步跟随";
+        } else {
+          dockTitle.textContent = "实时麦克风已就绪 · 请开口说话";
+          dockSub.textContent = "纯浏览器本地实时分析，音频不上传";
+        }
+      }
+
+      if (statusDot && statusLabel) {
+        if (active) {
+          statusDot.className = frozen ? "status-dot is-paused" : "status-dot is-live";
+          statusLabel.textContent = frozen ? "语音已冻结" : (studioState.micSimulated ? "仿真麦克风" : "麦克风实时");
+        } else {
+          statusDot.className = studioState.isPlaying ? "status-dot is-live" : "status-dot is-paused";
+          statusLabel.textContent = studioState.isPlaying ? "实时演示" : "已暂停";
+        }
+      }
+    }
+
+    function updateMicVuMeter(bandEnergies) {
+      const container = document.getElementById("micLevelBars");
+      if (!container || !studioState.micActive) return;
+      const bars = container.children;
+      const n = Math.min(bars.length, bandEnergies.length);
+      for (let i = 0; i < n; i++) {
+        const level = clamp01(bandEnergies[i]);
+        const h = Math.round(4 + level * 22);
+        bars[i].style.height = `${h}px`;
+        bars[i].style.opacity = (0.32 + level * 0.68).toFixed(2);
+      }
     }
 
     function playSynthesizedPhraseSound(key, rate = 1.0) {
@@ -907,19 +1070,74 @@
       }
     }
 
-    async function toggleMicrophoneStream() {
-      const btn = document.getElementById("btnMicStream");
-      const label = document.getElementById("micLabel");
-      if (studioState.micActive) {
-        studioState.micActive = false;
-        if (micScriptTimer) clearInterval(micScriptTimer);
-        if (micStreamObj) {
-          micStreamObj.getTracks().forEach(t => t.stop());
-          micStreamObj = null;
+    function stopMicrophoneStream(announce = true) {
+      studioState.micActive = false;
+      studioState.micSimulated = false;
+      studioState.micVoiceDetected = false;
+      studioState.micLevel = 0.0;
+      if (micStreamObj) {
+        micStreamObj.getTracks().forEach(t => t.stop());
+        micStreamObj = null;
+      }
+      micAnalyser = null;
+      micFreqData = null;
+      micTimeData = null;
+      micBandEdges = null;
+      studioState.liveVisualSmooth.removedRatio = null;
+      studioState.liveVisualSmooth.arcPositions = null;
+      studioState.liveVisualSmooth.barcodeVector = null;
+      updateMicControlsUI();
+      if (announce) {
+        showToast("已关闭实时麦克风输入，当前语音窗口已保留以便浏览");
+      }
+    }
+
+    function activateMicVisualMode(fromHero = false) {
+      studioState.isPlaying = true;
+      document.getElementById("playIcon").textContent = "Ⅱ";
+      document.getElementById("playLabel").textContent = "暂停";
+      completeAllSweeps();
+      // Gently clear buffer to a calm baseline so user's incoming voice stands out clearly
+      const D = STUDIO_CONFIG.dimension;
+      const rng = createRng(313);
+      for (let t = 0; t < STUDIO_CONFIG.maxFrames; t++) {
+        const row = new Float64Array(D);
+        for (let d = 0; d < D; d++) row[d] = 0.012 * rng.nextGaussian();
+        studioState.rawFrames[t] = row;
+        studioState.waveform[t] = 0.008 * rng.nextGaussian();
+      }
+      micNoiseFloor = new Float64Array(D).fill(0.06);
+      micEmaRow = new Float64Array(D);
+      micEmaWave = 0.0;
+      micStepAccumMs = 0.0;
+
+      // Pan smoothly to the leading (rightmost) edge for live oscilloscope streaming
+      for (const key of ["wave", "kinematics"]) {
+        studioState.scrubs[key].position = 1.0;
+        studioState.scrubs[key].velocity = 0.0;
+        updateScrubberUI(key);
+      }
+      for (const key of ["tempo", "fingerprint"]) {
+        studioState.scrubs[key].position = 0.0;
+        studioState.scrubs[key].velocity = 0.0;
+        updateScrubberUI(key);
+      }
+
+      refreshDisplayTelemetry(false);
+      updateMicControlsUI();
+
+      // If user clicked from the top Hero section, glide down to Track 1 so they see their voice immediately
+      if (fromHero && window.scrollY < window.innerHeight * 0.45) {
+        const firstShowcase = document.querySelector('[data-sweep="wave"]');
+        if (firstShowcase) {
+          firstShowcase.scrollIntoView({ behavior: "smooth", block: "center" });
         }
-        label.textContent = "开启麦克风";
-        btn.className = "tool-button";
-        showToast("已关闭实时麦克风输入，切回合成流示波模式");
+      }
+    }
+
+    async function toggleMicrophoneStream(fromHero = false) {
+      if (studioState.micActive) {
+        stopMicrophoneStream(true);
         return;
       }
 
@@ -927,59 +1145,114 @@
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           throw new Error("当前环境不支持麦克风 API");
         }
-        micStreamObj = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStreamObj = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
         const ctx = ensureAudioContext();
         const source = ctx.createMediaStreamSource(micStreamObj);
         micAnalyser = ctx.createAnalyser();
-        micAnalyser.fftSize = 256;
+        micAnalyser.fftSize = 1024;
+        micAnalyser.smoothingTimeConstant = 0.74;
         source.connect(micAnalyser);
 
-        const freqData = new Uint8Array(micAnalyser.frequencyBinCount);
-        const timeData = new Float32Array(micAnalyser.fftSize);
+        micFreqData = new Uint8Array(micAnalyser.frequencyBinCount);
+        micTimeData = new Float32Array(micAnalyser.fftSize);
+        micBandEdges = buildLogBandEdges(ctx.sampleRate || 48000, micAnalyser.fftSize, STUDIO_CONFIG.dimension);
+
         studioState.micActive = true;
-        label.textContent = "麦克风采集中";
-        btn.className = "tool-button is-on";
-        showToast("麦克风实时流已开启，说话即可驱动四轨视图");
-
-        micScriptTimer = setInterval(() => {
-          if (!studioState.micActive || !micAnalyser) return;
-          micAnalyser.getByteFrequencyData(freqData);
-          micAnalyser.getFloatTimeDomainData(timeData);
-
-          const D = STUDIO_CONFIG.dimension;
-          const newRow = new Float64Array(D);
-          const binsPerDim = Math.floor(freqData.length / D);
-          for (let d = 0; d < D; d++) {
-            let sum = 0.0;
-            for (let k = 0; k < binsPerDim; k++) {
-              sum += freqData[d * binsPerDim + k] / 255.0;
-            }
-            newRow[d] = (sum / binsPerDim - 0.15) * 2.2;
-          }
-          let rms = 0.0;
-          let peak = 0.0;
-          for (let i = 0; i < timeData.length; i++) {
-            rms += timeData[i] * timeData[i];
-            if (Math.abs(timeData[i]) > Math.abs(peak)) peak = timeData[i];
-          }
-          const env = Math.sign(peak || 1.0) * Math.min(0.98, Math.sqrt(rms / timeData.length) * 3.2);
-          pushSingleFrame(newRow, env);
-        }, 35);
+        studioState.micSimulated = false;
+        activateMicVisualMode(fromHero);
+        showToast("实时麦克风已开启 — 请开口说话，四轨算法视图将丝滑同步响应");
       } catch (err) {
-        // Fallback: simulate realistic live vocal stream when mic permission is unavailable in sandbox
+        // Fallback: smooth 60fps simulated live vocal stream when mic permission is unavailable
         studioState.micActive = true;
-        label.textContent = "仿真麦克风流中";
-        btn.className = "tool-button is-on";
-        showToast("当前浏览器容器未授权物理麦克风，已自动挂载 16kHz 实时仿真麦克风语流");
-        micScriptTimer = setInterval(() => {
-          if (!studioState.micActive) return;
-          if (studioState.injectionQueue.length < 8 && Math.random() < 0.18) {
-            const keys = Array.from(studioState.templates.keys());
-            const pick = keys[Math.floor(Math.random() * keys.length)];
-            queuePhraseUtterance(pick, studioState.speakingRate, studioState.speakerNuisance, false);
-          }
-        }, 260);
+        studioState.micSimulated = true;
+        activateMicVisualMode(fromHero);
+        queuePhraseUtterance(studioState.activePhraseKey, studioState.speakingRate, studioState.speakerNuisance, false);
+        showToast("未获取到物理麦克风权限，已自动启用 60 FPS 实时仿真语音流");
       }
+    }
+
+    function sampleLiveMicrophoneFrame() {
+      const D = STUDIO_CONFIG.dimension;
+      const vuLevels = new Float64Array(D);
+
+      if (!studioState.micSimulated && micAnalyser && micFreqData && micTimeData && micBandEdges) {
+        micAnalyser.getByteFrequencyData(micFreqData);
+        micAnalyser.getFloatTimeDomainData(micTimeData);
+
+        let rms = 0.0;
+        let peak = 0.0;
+        for (let i = 0; i < micTimeData.length; i++) {
+          const s = micTimeData[i];
+          rms += s * s;
+          if (Math.abs(s) > Math.abs(peak)) peak = s;
+        }
+        rms = Math.sqrt(rms / micTimeData.length);
+        const speechActive = rms > 0.012;
+        if (speechActive !== studioState.micVoiceDetected) {
+          studioState.micVoiceDetected = speechActive;
+          updateMicControlsUI();
+        }
+        studioState.micLevel = clamp01(rms * 5.2);
+
+        const row = new Float64Array(D);
+        for (let d = 0; d < D; d++) {
+          const b0 = micBandEdges[d];
+          const b1 = Math.max(b0 + 1, micBandEdges[d + 1]);
+          let sum = 0.0;
+          for (let k = b0; k < b1; k++) {
+            sum += micFreqData[k] / 255.0;
+          }
+          const rawBand = sum / (b1 - b0);
+          // Slow adaptive noise-floor tracking during quiet frames
+          if (!speechActive) {
+            micNoiseFloor[d] = micNoiseFloor[d] * 0.96 + rawBand * 0.04;
+          }
+          const cleanBand = Math.max(0.0, rawBand - micNoiseFloor[d] * 0.85);
+          const logCompressed = Math.log1p(cleanBand * 11.0) / Math.log(12.0);
+          vuLevels[d] = clamp01(logCompressed * 1.35);
+
+          // Center around speech formant zero-mean trajectory for crisp kinematics & fingerprint
+          const targetVal = speechActive ? (logCompressed * 2.15 - 0.35) : (cleanBand * 0.18);
+          micEmaRow[d] = micEmaRow[d] * 0.52 + targetVal * 0.48;
+          row[d] = micEmaRow[d];
+        }
+
+        // Smooth signed waveform envelope with natural carrier articulation
+        const targetWave = Math.sign(peak || 1.0) * Math.min(0.95, Math.pow(rms * 4.2, 0.82));
+        const waveAlpha = Math.abs(targetWave) > Math.abs(micEmaWave) ? 0.55 : 0.24;
+        micEmaWave = micEmaWave * (1.0 - waveAlpha) + targetWave * waveAlpha;
+
+        updateMicVuMeter(vuLevels);
+        return { row, wave: micEmaWave };
+      }
+
+      // Simulated live vocal stream fallback
+      if (studioState.injectionQueue.length < 10 && Math.random() < 0.08) {
+        const keys = Array.from(studioState.templates.keys());
+        const pick = keys[Math.floor(Math.random() * keys.length)];
+        queuePhraseUtterance(pick, studioState.speakingRate, studioState.speakerNuisance, false);
+      }
+      if (studioState.injectionQueue.length > 0) {
+        const nextItem = studioState.injectionQueue.shift();
+        for (let d = 0; d < D; d++) {
+          vuLevels[d] = clamp01(Math.abs(nextItem.frame[d]) * 0.65);
+        }
+        updateMicVuMeter(vuLevels);
+        return { row: nextItem.frame, wave: nextItem.wave };
+      }
+      const quiet = new Float64Array(D);
+      for (let d = 0; d < D; d++) {
+        quiet[d] = 0.015 * micSimRng.nextGaussian();
+        vuLevels[d] = 0.06;
+      }
+      updateMicVuMeter(vuLevels);
+      return { row: quiet, wave: 0.012 * micSimRng.nextGaussian() };
     }
 
     function pushSingleFrame(frameRow, waveSample) {
@@ -1000,7 +1273,7 @@
         studioState.injectionQueue.push({ frame: frames[i], wave: wave[i] });
       }
       // Trailing breath pause
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 14; i++) {
         const quiet = new Float64Array(D);
         for (let d = 0; d < D; d++) quiet[d] = 0.015 * rng.nextGaussian();
         studioState.injectionQueue.push({ frame: quiet, wave: 0.012 * rng.nextGaussian() });
@@ -1009,8 +1282,11 @@
       if (playSound) playSynthesizedPhraseSound(key, rate);
     }
 
-    // Immediately flush a phrase into the center of the rolling buffer so it's visible even when paused
+    // Build ONE continuous 240-frame panoramic stream (primary phrase + seamless bridge + continuation phrase)
     function injectPhraseImmediate(key, announce = true) {
+      if (studioState.micActive) {
+        stopMicrophoneStream(false);
+      }
       studioState.activePhraseKey = key;
       studioState.selectedTemplateKey = key;
       const selectEl = document.getElementById("selectCompareTemplate");
@@ -1019,30 +1295,56 @@
         chip.classList.toggle("is-active", chip.dataset.key === key);
       });
 
-      const { frames, wave } = generatePhraseTrajectory(
+      const keys = Array.from(studioState.templates.keys());
+      const nextKey = keys.length > 1
+        ? keys[(Math.max(0, keys.indexOf(key)) + 1) % keys.length]
+        : key;
+      studioState.continuationKey = nextKey;
+
+      const primary = generatePhraseTrajectory(
         key,
         STUDIO_CONFIG.baseWindowLength,
         studioState.speakingRate,
         studioState.speakerNuisance,
         37 + (studioState.frameStepCounter % 53)
       );
+      const secondary = generatePhraseTrajectory(
+        nextKey,
+        STUDIO_CONFIG.baseWindowLength,
+        studioState.speakingRate,
+        studioState.speakerNuisance,
+        523 + (Math.max(0, keys.indexOf(key)) * 71)
+      );
 
-      const rng = createRng(91 + studioState.frameStepCounter);
+      const T = STUDIO_CONFIG.maxFrames;
       const D = STUDIO_CONFIG.dimension;
-      const totalPush = frames.length + 14;
-      for (let i = 0; i < 6; i++) {
+      const rng = createRng(91 + studioState.frameStepCounter);
+
+      // Start with calm continuous ambient breath across all 240 frames
+      studioState.rawFrames = new Array(T);
+      studioState.waveform = new Float64Array(T);
+      for (let t = 0; t < T; t++) {
         const q = new Float64Array(D);
         for (let d = 0; d < D; d++) q[d] = 0.014 * rng.nextGaussian();
-        pushSingleFrame(q, 0.01 * rng.nextGaussian());
+        studioState.rawFrames[t] = q;
+        studioState.waveform[t] = 0.010 * rng.nextGaussian();
       }
-      for (let i = 0; i < frames.length; i++) {
-        pushSingleFrame(frames[i], wave[i]);
+
+      // Place primary utterance smoothly centered in the first viewport [0..120]
+      const half = Math.floor(T / 2);
+      const pStart = Math.max(12, Math.floor((half - primary.frames.length) * 0.5));
+      for (let i = 0; i < primary.frames.length && (pStart + i) < T; i++) {
+        studioState.rawFrames[pStart + i] = primary.frames[i];
+        studioState.waveform[pStart + i] = primary.wave[i];
       }
-      for (let i = 0; i < 8; i++) {
-        const q = new Float64Array(D);
-        for (let d = 0; d < D; d++) q[d] = 0.014 * rng.nextGaussian();
-        pushSingleFrame(q, 0.01 * rng.nextGaussian());
+
+      // Place continuation utterance smoothly centered in the second viewport [120..240]
+      const sStart = Math.max(half + 12, half + Math.floor((half - secondary.frames.length) * 0.5));
+      for (let i = 0; i < secondary.frames.length && (sStart + i) < T; i++) {
+        studioState.rawFrames[sStart + i] = secondary.frames[i];
+        studioState.waveform[sStart + i] = secondary.wave[i];
       }
+
       playSynthesizedPhraseSound(key, studioState.speakingRate);
       renderCurrentSnapshot(true);
       if (announce) {
@@ -1213,15 +1515,20 @@
     function syncScrubbers() {
       for (const key of SCRUB_KEYS) {
         const shell = document.querySelector(`[data-scrub-shell="${key}"]`);
-        if (!shell) continue;
-        const ready = isSweepReady(key);
-        if (shell.hidden === ready) shell.hidden = !ready;
-        const input = shell.querySelector("[data-scrub-key]");
-        if (input && input.disabled === ready) input.disabled = !ready;
+        const stage = document.querySelector(`[data-pan-stage="${key}"]`);
+        const ready = studioState.micActive || isSweepReady(key);
+        if (shell) {
+          if (shell.hidden === ready) shell.hidden = !ready;
+          const input = shell.querySelector("[data-scrub-key]");
+          if (input && input.disabled === ready) input.disabled = !ready;
+        }
+        if (stage) {
+          stage.classList.toggle("is-pannable", ready);
+        }
       }
     }
 
-    // Map normalized speed [0, 1] -> calm blue (steady) to warm coral (transition).
+    // Map normalized speed [0, 1] -> calm blue (steady) to teal to warm coral (transition).
     function speedToColor(normSpeed, alpha = 1.0) {
       const s = Math.max(0.0, Math.min(1.0, normSpeed));
       let r, g, b;
@@ -1239,413 +1546,527 @@
       return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
-    function drawTraceHead(ctx, x, y, color) {
-      const halo = ctx.createRadialGradient(x, y, 0, x, y, 12);
-      halo.addColorStop(0, "rgba(0, 113, 227, 0.18)");
+    function drawTraceHead(ctx, x, y, color, isLive = false) {
+      const outerR = isLive ? 16 : 12;
+      const halo = ctx.createRadialGradient(x, y, 0, x, y, outerR);
+      halo.addColorStop(0, isLive ? "rgba(230, 106, 78, 0.30)" : "rgba(0, 113, 227, 0.22)");
       halo.addColorStop(1, "rgba(0, 113, 227, 0)");
       ctx.fillStyle = halo;
       ctx.beginPath();
-      ctx.arc(x, y, 12, 0, Math.PI * 2);
+      ctx.arc(x, y, outerR, 0, Math.PI * 2);
       ctx.fill();
+
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(x, y, isLive ? 4.2 : 3.4, 0, Math.PI * 2);
+      ctx.fill();
+
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+      ctx.arc(x, y, isLive ? 2.6 : 2.1, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Track 1: a frozen waveform revealed like a slowly writing ECG trace.
+    function drawPillBadge(ctx, text, x, y, bgColor, textColor, borderColor = null) {
+      ctx.save();
+      ctx.font = `600 10px ${CANVAS_MONO}`;
+      const metrics = ctx.measureText(text);
+      const padX = 8;
+      const pillH = 20;
+      const pillW = metrics.width + padX * 2;
+      const r = pillH * 0.5;
+      const px = x;
+      const py = y - pillH * 0.5;
+
+      ctx.beginPath();
+      ctx.moveTo(px + r, py);
+      ctx.lineTo(px + pillW - r, py);
+      ctx.quadraticCurveTo(px + pillW, py, px + pillW, py + r);
+      ctx.lineTo(px + pillW, py + pillH - r);
+      ctx.quadraticCurveTo(px + pillW, py + pillH, px + pillW - r, py + pillH);
+      ctx.lineTo(px + r, py + pillH);
+      ctx.quadraticCurveTo(px, py + pillH, px, py + pillH - r);
+      ctx.lineTo(px, py + r);
+      ctx.quadraticCurveTo(px, py, px + r, py);
+      ctx.closePath();
+
+      ctx.fillStyle = bgColor;
+      ctx.fill();
+      if (borderColor) {
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+      ctx.fillStyle = textColor;
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, px + padX, y + 0.5);
+      ctx.restore();
+    }
+
+    function drawRoundedRectPath(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, w * 0.5, h * 0.5);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.lineTo(x + w - rr, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+      ctx.lineTo(x + w, y + h - rr);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+      ctx.lineTo(x + rr, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+      ctx.lineTo(x, y + rr);
+      ctx.quadraticCurveTo(x, y, x + rr, y);
+      ctx.closePath();
+    }
+
+    // Track 1: 100% seamless continuous panoramic acoustic waveform across full 200% width.
     function drawTrack1(telemetry) {
       const env = prepareCanvas("canvasTrack1");
       if (!env) return;
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
+      const T = telemetry.frameCount;
+      if (T < 2) return;
+
       const frameW = w / PAN_SEGMENTS;
       const midY = h * 0.54;
-      const x0 = 10;
-      const x1 = frameW - 10;
+      const x0 = 14;
+      const x1 = w - 14;
+      const progress = studioState.micActive ? 1.0 : sectionProgress("wave");
+      const revealX = progress >= 0.995 ? w : (x0 + (frameW - x0) * progress);
 
-      for (let seg = 0; seg < PAN_SEGMENTS; seg++) {
-        const view = seg === 0 ? telemetry : (telemetry.continuation || telemetry);
-        const T = view.frameCount;
-        if (T < 2) continue;
-        const progress = sectionProgress("wave");
-        const wave = smoothSeries(view.waveform, 2);
-        const speedNorm = smoothSeries(view.frameSpeedNorm, 2);
-        const xAt = (t) => x0 + ((x1 - x0) * t) / Math.max(T - 1, 1);
-        const revealX = x0 + (x1 - x0) * progress;
-        const points = buildSmoothPoints(wave, x0, x1, (value) => midY - value * (h * 0.36));
+      const wave = smoothSeries(telemetry.waveform, 2);
+      const speedNorm = smoothSeries(telemetry.frameSpeedNorm, 2);
+      const xAt = (t) => x0 + ((x1 - x0) * t) / Math.max(T - 1, 1);
+      const points = buildSmoothPoints(wave, x0, x1, (value) => midY - value * (h * 0.36));
 
+      // Subtle continuous horizontal reference grid & baseline
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.04)";
+      ctx.lineWidth = 1;
+      for (const frac of [0.22, 0.86]) {
+        const gy = h * frac;
+        ctx.beginPath();
+        ctx.moveTo(x0, gy);
+        ctx.lineTo(x1, gy);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.085)";
+      ctx.beginPath();
+      ctx.moveTo(x0, midY);
+      ctx.lineTo(x1, midY);
+      ctx.stroke();
+
+      // Subtle continuous time ticks along the bottom edge
+      ctx.save();
+      ctx.font = `500 9px ${CANVAS_MONO}`;
+      ctx.fillStyle = "rgba(134, 134, 139, 0.45)";
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.06)";
+      const totalSec = (T * MIC_FRAME_STEP_MS) / 1000;
+      const tickCount = 12;
+      for (let i = 0; i <= tickCount; i++) {
+        const tx = x0 + ((x1 - x0) * i) / tickCount;
+        ctx.beginPath();
+        ctx.moveTo(tx, h - 18);
+        ctx.lineTo(tx, h - 13);
+        ctx.stroke();
+        if (i % 2 === 0 && i < tickCount) {
+          const secLabel = `${((totalSec * i) / tickCount).toFixed(1)}s`;
+          ctx.fillText(secLabel, tx + 3, h - 6);
+        }
+      }
+      ctx.restore();
+
+      // Clip to progressive reveal boundary (full width once revealed or in live mic mode)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, Math.max(0, revealX), h);
+      ctx.clip();
+
+      // Soft luminous match bands along the continuous timeline
+      for (let idx = telemetry.activeMatches.length - 1; idx >= 0; idx--) {
+        const match = telemetry.activeMatches[idx];
+        const bandX1 = xAt(match.start);
+        const bandX2 = xAt(Math.min(match.end, T - 1));
+        const width = Math.max(22, bandX2 - bandX1);
+        const isTop = idx === 0;
+        const alpha = isTop ? 0.11 : 0.065;
+        const color = isTop ? "0, 113, 227" : "43, 156, 148";
+        const band = ctx.createLinearGradient(bandX1, 0, bandX1 + width, 0);
+        band.addColorStop(0, `rgba(${color}, 0)`);
+        band.addColorStop(0.16, `rgba(${color}, ${alpha})`);
+        band.addColorStop(0.84, `rgba(${color}, ${alpha})`);
+        band.addColorStop(1, `rgba(${color}, 0)`);
+        ctx.fillStyle = band;
+        ctx.fillRect(bandX1, 0, width, h - 16);
+      }
+
+      // CUSUM change-point vertical guide
+      const cusumX = xAt(telemetry.streamEv.cusum.changeIndex);
+      ctx.save();
+      ctx.strokeStyle = "rgba(230, 106, 78, 0.38)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 6]);
+      ctx.beginPath();
+      ctx.moveTo(cusumX, 12);
+      ctx.lineTo(cusumX, h - 20);
+      ctx.stroke();
+      ctx.restore();
+
+      // Soft continuous area fill under waveform
+      const area = ctx.createLinearGradient(0, midY - h * 0.36, 0, midY + h * 0.36);
+      area.addColorStop(0, "rgba(0, 113, 227, 0.14)");
+      area.addColorStop(0.5, "rgba(43, 156, 148, 0.045)");
+      area.addColorStop(1, "rgba(0, 113, 227, 0.0)");
+      ctx.fillStyle = area;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, midY);
+      ctx.lineTo(points[0].x, points[0].y);
+      appendSmoothCurve(ctx, points);
+      ctx.lineTo(points[points.length - 1].x, midY);
+      ctx.closePath();
+      ctx.fill();
+
+      // Ambient glow stroke
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(0, 113, 227, 0.13)";
+      ctx.lineWidth = 8;
+      traceSmoothPath(ctx, points);
+      ctx.stroke();
+
+      // Continuous high-resolution speed-colored waveform stroke (28 stops across full panorama)
+      const strokeGradient = ctx.createLinearGradient(x0, 0, x1, 0);
+      const stops = 28;
+      for (let stop = 0; stop <= stops; stop++) {
+        const ratio = stop / stops;
+        const sampleIndex = Math.round(ratio * (T - 1));
+        strokeGradient.addColorStop(ratio, speedToColor(speedNorm[sampleIndex], 0.94));
+      }
+      ctx.strokeStyle = strokeGradient;
+      ctx.lineWidth = 2.0;
+      traceSmoothPath(ctx, points);
+      ctx.stroke();
+
+      // Crisp pill callout labels for matched utterances across the entire panorama
+      for (let idx = 0; idx < Math.min(2, telemetry.activeMatches.length); idx++) {
+        const match = telemetry.activeMatches[idx];
+        const labelX = Math.min(w - 196, Math.max(14, xAt(match.start)));
+        const alpha = clamp01((revealX - labelX) / 68);
+        if (alpha <= 0) continue;
         ctx.save();
-        ctx.translate(seg * frameW, 0);
-
-        ctx.strokeStyle = "rgba(29, 29, 31, 0.07)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(8, midY);
-        ctx.lineTo(frameW - 8, midY);
-        ctx.stroke();
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(0, 0, Math.max(0, revealX), h);
-        ctx.clip();
-
-        for (let idx = view.activeMatches.length - 1; idx >= 0; idx--) {
-          const match = view.activeMatches[idx];
-          const bandX1 = xAt(match.start);
-          const bandX2 = xAt(Math.min(match.end, T - 1));
-          const width = Math.max(18, bandX2 - bandX1);
-          const isTop = idx === 0;
-          const alpha = isTop ? 0.10 : 0.045;
-          const color = isTop ? "0, 113, 227" : "123, 107, 176";
-          const band = ctx.createLinearGradient(bandX1, 0, bandX1 + width, 0);
-          band.addColorStop(0, `rgba(${color}, 0)`);
-          band.addColorStop(0.18, `rgba(${color}, ${alpha})`);
-          band.addColorStop(0.82, `rgba(${color}, ${alpha})`);
-          band.addColorStop(1, `rgba(${color}, 0)`);
-          ctx.fillStyle = band;
-          ctx.fillRect(bandX1, 0, width, h);
-        }
-
-        const cusumX = xAt(view.streamEv.cusum.changeIndex);
-        ctx.save();
-        ctx.strokeStyle = "rgba(230, 106, 78, 0.36)";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([2, 6]);
-        ctx.beginPath();
-        ctx.moveTo(cusumX, 10);
-        ctx.lineTo(cusumX, h - 10);
-        ctx.stroke();
+        ctx.globalAlpha = alpha;
+        const label = `${match.key} · ${match.score.toFixed(2)}`;
+        drawPillBadge(
+          ctx,
+          label,
+          labelX,
+          20,
+          idx === 0 ? "rgba(255, 255, 255, 0.88)" : "rgba(248, 252, 251, 0.86)",
+          idx === 0 ? "rgba(0, 88, 178, 0.92)" : "rgba(31, 126, 119, 0.90)",
+          idx === 0 ? "rgba(0, 113, 227, 0.18)" : "rgba(43, 156, 148, 0.22)"
+        );
         ctx.restore();
+      }
 
-        const area = ctx.createLinearGradient(0, midY - h * 0.34, 0, midY + h * 0.34);
-        area.addColorStop(0, "rgba(0, 113, 227, 0.12)");
-        area.addColorStop(0.52, "rgba(0, 113, 227, 0.045)");
-        area.addColorStop(1, "rgba(0, 113, 227, 0)");
-        ctx.fillStyle = area;
-        ctx.beginPath();
-        ctx.moveTo(points[0].x, midY);
-        ctx.lineTo(points[0].x, points[0].y);
-        appendSmoothCurve(ctx, points);
-        ctx.lineTo(points[points.length - 1].x, midY);
-        ctx.closePath();
-        ctx.fill();
+      ctx.restore();
 
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        ctx.strokeStyle = "rgba(0, 113, 227, 0.13)";
-        ctx.lineWidth = 7;
-        traceSmoothPath(ctx, points);
-        ctx.stroke();
-
-        const strokeGradient = ctx.createLinearGradient(x0, 0, x1, 0);
-        for (let stop = 0; stop <= 12; stop++) {
-          const ratio = stop / 12;
-          const sampleIndex = Math.round(ratio * (T - 1));
-          strokeGradient.addColorStop(ratio, speedToColor(speedNorm[sampleIndex], 0.90));
-        }
-        ctx.strokeStyle = strokeGradient;
-        ctx.lineWidth = 1.8;
-        traceSmoothPath(ctx, points);
-        ctx.stroke();
-        ctx.restore();
-
-        const topMatch = view.activeMatches[0];
-        if (seg === 0 && topMatch) {
-          const labelX = xAt(topMatch.start);
-          const alpha = clamp01((revealX - labelX) / 72);
-          if (alpha > 0) {
-            const label = `${topMatch.key} · ${topMatch.score.toFixed(2)}`;
-            ctx.save();
-            ctx.globalAlpha = alpha;
-            ctx.font = `550 10px ${CANVAS_MONO}`;
-            ctx.fillStyle = "rgba(0, 88, 178, 0.78)";
-            ctx.fillText(label, Math.min(frameW - 190, Math.max(10, labelX)), 20);
-            ctx.restore();
-          }
-        } else if (seg > 0) {
-          ctx.save();
-          ctx.font = `550 10px ${CANVAS_MONO}`;
-          ctx.fillStyle = "rgba(134, 134, 139, 0.62)";
-          ctx.fillText(`下一段 · ${view.continuationKey || "后续语音"}`, 10, 20);
-          ctx.restore();
-        }
-
-        if (progress > 0.002 && progress < 0.995) {
-          const headY = midY - sampleSeries(wave, progress * (T - 1)) * (h * 0.36);
-          drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
-        }
-
-        ctx.restore();
+      // Writing head during initial sweep OR live pulse head at leading edge during mic input
+      if (!studioState.micActive && progress > 0.002 && progress < 0.995) {
+        const tPos = ((revealX - x0) / Math.max(x1 - x0, 1)) * (T - 1);
+        const headY = midY - sampleSeries(wave, tPos) * (h * 0.36);
+        drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.92)", false);
+      } else if (studioState.micActive && studioState.isPlaying) {
+        const lastPt = points[points.length - 1];
+        drawTraceHead(ctx, lastPt.x, lastPt.y, PALETTE.coral, true);
       }
     }
 
-    // Track 2: fixed latent kinematics, revealed from left to right.
+    // Track 2: 100% seamless continuous panoramic latent kinematics across full 200% width.
     function drawTrack2(telemetry) {
       const env = prepareCanvas("canvasTrack2");
       if (!env) return;
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      const progress = sectionProgress("kinematics");
+      const speed = smoothSeries(telemetry.decomp.speed, 3);
+      const turning = smoothSeries(telemetry.decomp.turning, 3);
+      const cusumCurve = smoothSeries(telemetry.streamEv.cusum.curve, 3);
+      const cusumIdx = telemetry.streamEv.cusum.changeIndex;
+      const peaks = telemetry.streamEv.peaks;
+      const nSp = speed.length;
+      if (nSp < 2) return;
+
       const frameW = w / PAN_SEGMENTS;
-      const padX = 8;
-      const usableW = Math.max(20, frameW - 16);
+      const padX = 14;
+      const usableW = Math.max(20, w - padX * 2);
+      const progress = studioState.micActive ? 1.0 : sectionProgress("kinematics");
+      const revealX = progress >= 0.995 ? w : (padX + (frameW - padX) * progress);
 
-      for (let seg = 0; seg < PAN_SEGMENTS; seg++) {
-        const view = seg === 0 ? telemetry : (telemetry.continuation || telemetry);
-        const speed = smoothSeries(view.decomp.speed, 3);
-        const turning = smoothSeries(view.decomp.turning, 3);
-        const cusumCurve = smoothSeries(view.streamEv.cusum.curve, 3);
-        const cusumIdx = view.streamEv.cusum.changeIndex;
-        const peaks = view.streamEv.peaks;
-        const nSp = speed.length;
-        if (nSp < 2) continue;
+      let maxSp = 0.08;
+      for (let i = 0; i < nSp; i++) if (speed[i] > maxSp) maxSp = speed[i];
+      let maxCusum = 0.08;
+      for (let i = 0; i < cusumCurve.length; i++) {
+        if (Math.abs(cusumCurve[i]) > maxCusum) maxCusum = Math.abs(cusumCurve[i]);
+      }
 
-        let maxSp = EPSILON;
-        for (let i = 0; i < nSp; i++) if (speed[i] > maxSp) maxSp = speed[i];
-        let maxCusum = EPSILON;
-        for (let i = 0; i < cusumCurve.length; i++) {
-          if (Math.abs(cusumCurve[i]) > maxCusum) maxCusum = Math.abs(cusumCurve[i]);
-        }
+      const xAt = (index) => padX + (usableW * index) / Math.max(nSp - 1, 1);
+      const speedY = (value) => h - 16 - (value / maxSp) * (h - 36);
+      const cusumY = (value) => h - 16 - (0.5 + 0.44 * (value / maxCusum)) * (h - 32);
+      const turningY = (value) => h - 18 - ((value + 1.0) * 0.5) * (h - 38);
 
-        const xAt = (index) => padX + (usableW * index) / Math.max(nSp - 1, 1);
-        const revealX = padX + usableW * progress;
-        const speedY = (value) => h - 12 - (value / maxSp) * (h - 28);
-        const cusumY = (value) => h - 12 - (0.5 + 0.45 * (value / maxCusum)) * (h - 24);
-        const turningY = (value) => h - 14 - ((value + 1.0) * 0.5) * (h - 32);
-        const speedPoints = buildSmoothPoints(speed, padX, frameW - padX, speedY);
-        const cusumPoints = buildSmoothPoints(cusumCurve, padX, frameW - padX, cusumY);
-        const turningPoints = buildSmoothPoints(turning, padX, frameW - padX, turningY);
-        const peakColors = [PALETTE.blue, PALETTE.teal];
+      const speedPoints = buildSmoothPoints(speed, padX, w - padX, speedY);
+      const cusumPoints = buildSmoothPoints(cusumCurve, padX, w - padX, cusumY);
+      const turningPoints = buildSmoothPoints(turning, padX, w - padX, turningY);
+      const peakColors = [PALETTE.blue, PALETTE.teal];
 
-        ctx.save();
-        ctx.translate(seg * frameW, 0);
-
-        ctx.strokeStyle = "rgba(29, 29, 31, 0.055)";
-        ctx.lineWidth = 1;
+      // Subtle continuous horizontal grid & baseline
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.04)";
+      ctx.lineWidth = 1;
+      for (const frac of [0.28, 0.6]) {
         ctx.beginPath();
-        ctx.moveTo(padX, h - 12);
-        ctx.lineTo(frameW - padX, h - 12);
+        ctx.moveTo(padX, h * frac);
+        ctx.lineTo(w - padX, h * frac);
         ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.075)";
+      ctx.beginPath();
+      ctx.moveTo(padX, h - 16);
+      ctx.lineTo(w - padX, h - 16);
+      ctx.stroke();
 
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, Math.max(0, revealX), h);
+      ctx.clip();
+
+      // Turning angle curve (violet)
+      ctx.save();
+      ctx.strokeStyle = "rgba(123, 107, 176, 0.24)";
+      ctx.lineWidth = 1.15;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      traceSmoothPath(ctx, turningPoints);
+      ctx.stroke();
+      ctx.restore();
+
+      // Zero-mean CUSUM curve (coral)
+      ctx.save();
+      ctx.strokeStyle = "rgba(230, 106, 78, 0.62)";
+      ctx.lineWidth = 1.35;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      traceSmoothPath(ctx, cusumPoints);
+      ctx.stroke();
+      ctx.restore();
+
+      // Soft speed area gradient
+      const grad = ctx.createLinearGradient(0, 14, 0, h - 14);
+      grad.addColorStop(0, "rgba(0, 113, 227, 0.14)");
+      grad.addColorStop(1, "rgba(0, 113, 227, 0.0)");
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(speedPoints[0].x, h - 16);
+      ctx.lineTo(speedPoints[0].x, speedPoints[0].y);
+      appendSmoothCurve(ctx, speedPoints);
+      ctx.lineTo(speedPoints[speedPoints.length - 1].x, h - 16);
+      ctx.closePath();
+      ctx.fill();
+
+      // Speed glow halo
+      ctx.strokeStyle = "rgba(0, 113, 227, 0.12)";
+      ctx.lineWidth = 8;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      traceSmoothPath(ctx, speedPoints);
+      ctx.stroke();
+
+      // Continuous multi-stop speed gradient across full panorama
+      const speedGradient = ctx.createLinearGradient(padX, 0, w - padX, 0);
+      const stops = 28;
+      for (let stop = 0; stop <= stops; stop++) {
+        const ratio = stop / stops;
+        const sampleIndex = Math.round(ratio * (nSp - 1));
+        speedGradient.addColorStop(ratio, speedToColor(clamp01(speed[sampleIndex] / maxSp), 0.95));
+      }
+      ctx.strokeStyle = speedGradient;
+      ctx.lineWidth = 2.0;
+      traceSmoothPath(ctx, speedPoints);
+      ctx.stroke();
+
+      // CUSUM change-point laser line + pill badge
+      const laserX = xAt(cusumIdx);
+      const laserAlpha = clamp01((revealX - laserX) / 54);
+      if (laserAlpha > 0) {
         ctx.save();
+        ctx.globalAlpha = laserAlpha;
+        ctx.strokeStyle = PALETTE.coral;
+        ctx.lineWidth = 1.15;
+        ctx.setLineDash([3, 5]);
         ctx.beginPath();
-        ctx.rect(0, 0, Math.max(0, revealX), h);
-        ctx.clip();
-
-        ctx.save();
-        ctx.strokeStyle = "rgba(123, 107, 176, 0.20)";
-        ctx.lineWidth = 1.0;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        traceSmoothPath(ctx, turningPoints);
+        ctx.moveTo(laserX, 26);
+        ctx.lineTo(laserX, h - 12);
         ctx.stroke();
+        ctx.setLineDash([]);
+        const badgeX = Math.min(w - 150, Math.max(14, laserX - 58));
+        drawPillBadge(
+          ctx,
+          `CUSUM 变点 ${(cusumIdx / Math.max(nSp - 1, 1)).toFixed(2)}`,
+          badgeX,
+          16,
+          "rgba(255, 245, 242, 0.92)",
+          PALETTE.coral,
+          "rgba(230, 106, 78, 0.24)"
+        );
         ctx.restore();
+      }
+
+      // Primary & secondary peak markers
+      for (let p = 0; p < Math.min(2, peaks.length); p++) {
+        const idx = peaks[p];
+        const px = xAt(idx);
+        const alpha = clamp01((revealX - px) / 48);
+        if (alpha <= 0) continue;
+        const py = speedY(speed[idx]);
+        const radius = p === 0 ? 4.8 : 4.0;
 
         ctx.save();
-        ctx.strokeStyle = "rgba(230, 106, 78, 0.56)";
-        ctx.lineWidth = 1.25;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        traceSmoothPath(ctx, cusumPoints);
-        ctx.stroke();
-        ctx.restore();
-
-        const grad = ctx.createLinearGradient(0, 10, 0, h);
-        grad.addColorStop(0, "rgba(0, 113, 227, 0.13)");
-        grad.addColorStop(1, "rgba(0, 113, 227, 0.0)");
-        ctx.fillStyle = grad;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
         ctx.beginPath();
-        ctx.moveTo(speedPoints[0].x, h - 12);
-        ctx.lineTo(speedPoints[0].x, speedPoints[0].y);
-        appendSmoothCurve(ctx, speedPoints);
-        ctx.lineTo(speedPoints[speedPoints.length - 1].x, h - 12);
-        ctx.closePath();
+        ctx.arc(px, py, radius + 2.6, 0, Math.PI * 2);
         ctx.fill();
-
-        ctx.strokeStyle = "rgba(0, 113, 227, 0.12)";
-        ctx.lineWidth = 7;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        traceSmoothPath(ctx, speedPoints);
-        ctx.stroke();
-
-        const speedGradient = ctx.createLinearGradient(padX, 0, frameW - padX, 0);
-        for (let stop = 0; stop <= 12; stop++) {
-          const ratio = stop / 12;
-          const sampleIndex = Math.round(ratio * (nSp - 1));
-          speedGradient.addColorStop(ratio, speedToColor(clamp01(speed[sampleIndex] / maxSp), 0.94));
-        }
-        ctx.strokeStyle = speedGradient;
-        ctx.lineWidth = 1.8;
-        traceSmoothPath(ctx, speedPoints);
-        ctx.stroke();
+        ctx.fillStyle = peakColors[p];
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.font = `650 9.5px ${CANVAS_MONO}`;
+        ctx.fillText(p === 0 ? "P1" : "P2", Math.max(8, px - 7), Math.max(14, py - 10));
         ctx.restore();
+      }
 
-        const laserX = xAt(cusumIdx);
-        const laserAlpha = clamp01((revealX - laserX) / 58);
-        if (laserAlpha > 0) {
-          ctx.save();
-          ctx.globalAlpha = laserAlpha;
-          ctx.strokeStyle = PALETTE.coral;
-          ctx.lineWidth = 1.1;
-          ctx.setLineDash([3, 5]);
-          ctx.beginPath();
-          ctx.moveTo(laserX, 4);
-          ctx.lineTo(laserX, h - 4);
-          ctx.stroke();
-          ctx.restore();
-        }
+      ctx.restore();
 
-        const labelAlpha = clamp01((progress - 0.58) / 0.22);
-        if (seg === 0 && labelAlpha > 0) {
-          ctx.save();
-          ctx.globalAlpha = labelAlpha;
-          ctx.fillStyle = PALETTE.coral;
-          ctx.font = `600 10px ${CANVAS_MONO}`;
-          ctx.fillText(`CUSUM 变点 ${(cusumIdx / Math.max(nSp - 1, 1)).toFixed(2)}`, 8, 14);
-          ctx.restore();
-        } else if (seg > 0) {
-          ctx.save();
-          ctx.fillStyle = "rgba(134, 134, 139, 0.62)";
-          ctx.font = `600 10px ${CANVAS_MONO}`;
-          ctx.fillText(`下一段 · ${view.continuationKey || "后续语音"}`, 8, 14);
-          ctx.restore();
-        }
-
-        for (let p = 0; p < Math.min(2, peaks.length); p++) {
-          const idx = peaks[p];
-          const px = xAt(idx);
-          const alpha = clamp01((revealX - px) / 48);
-          if (alpha <= 0) continue;
-          const py = speedY(speed[idx]);
-          const radius = p === 0 ? 4.6 : 3.8;
-
-          ctx.save();
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle = peakColors[p];
-          ctx.beginPath();
-          ctx.arc(px, py, radius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.font = `650 9px ${CANVAS_MONO}`;
-          ctx.fillText(p === 0 ? "P1" : "P2", Math.max(6, px - 7), Math.max(11, py - 8));
-          ctx.restore();
-        }
-
-        if (progress > 0.002 && progress < 0.995) {
-          const headY = speedY(sampleSeries(speed, progress * (nSp - 1)));
-          drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.88)");
-        }
-
-        ctx.restore();
+      if (!studioState.micActive && progress > 0.002 && progress < 0.995) {
+        const sPos = ((revealX - padX) / Math.max(usableW, 1)) * (nSp - 1);
+        const headY = speedY(sampleSeries(speed, sPos));
+        drawTraceHead(ctx, revealX, headY, "rgba(0, 113, 227, 0.92)", false);
+      } else if (studioState.micActive && studioState.isPlaying) {
+        const lastPt = speedPoints[speedPoints.length - 1];
+        drawTraceHead(ctx, lastPt.x, lastPt.y, PALETTE.coral, true);
       }
     }
 
-    // Track 3: a fixed tempo ruler painted progressively from left to right.
+    // Track 3: ONE continuous panoramic tempo ruler (Linear -> ArcLen) across full 200% width.
     function drawTrack3(telemetry) {
       const env = prepareCanvas("canvasTrack3");
       if (!env) return;
       const { ctx, w, h } = env;
       ctx.clearRect(0, 0, w, h);
 
-      const progress = sectionProgress("tempo");
+      const { linearPositions, arcPositions } = telemetry.arcRuler;
+      const nTicks = linearPositions.length;
+      if (nTicks < 2) return;
+      const maxPos = Math.max(linearPositions[nTicks - 1], EPSILON);
 
       const frameW = w / PAN_SEGMENTS;
-      const padX = 52;
-      const usableW = Math.max(40, frameW - padX * 2);
-      const revealX = padX + usableW * progress;
-      const yLinear = 28;
-      const yArc = h - 26;
+      const padLeft = 74;
+      const padRight = 24;
+      const usableW = Math.max(60, w - padLeft - padRight);
+      const progress = studioState.micActive ? 1.0 : sectionProgress("tempo");
+      const revealX = progress >= 0.995 ? w : (padLeft + Math.max(40, frameW - padLeft - 12) * progress);
 
-      const hintAlpha = clamp01((progress - 0.68) / 0.24);
+      const yLinear = 30;
+      const yArc = h - 30;
+      const midY = (yLinear + yArc) * 0.5;
 
-      for (let seg = 0; seg < PAN_SEGMENTS; seg++) {
-        const view = seg === 0 ? telemetry : (telemetry.continuation || telemetry);
-        const { linearPositions, arcPositions } = view.arcRuler;
-        const nTicks = linearPositions.length;
-        if (nTicks < 2) continue;
-        const maxPos = Math.max(linearPositions[nTicks - 1], EPSILON);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padLeft - 8, 0, Math.max(0, revealX - (padLeft - 8)), h);
+      ctx.clip();
 
-        ctx.save();
-        ctx.translate(seg * frameW, 0);
+      // Continuous unbroken top Linear rail
+      ctx.strokeStyle = "rgba(29, 29, 31, 0.14)";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(padLeft, yLinear);
+      ctx.lineTo(padLeft + usableW, yLinear);
+      ctx.stroke();
 
-        if (seg === 0) {
-          ctx.font = `600 10px ${CANVAS_MONO}`;
-          ctx.fillStyle = PALETTE.faint;
-          ctx.fillText("Linear", 8, yLinear + 4);
-          ctx.fillStyle = PALETTE.teal;
-          ctx.fillText("ArcLen", 8, yArc + 4);
-        } else {
-          ctx.font = `600 10px ${CANVAS_MONO}`;
-          ctx.fillStyle = "rgba(134, 134, 139, 0.62)";
-          ctx.fillText(`下一段 · ${view.continuationKey || "后续语音"}`, 8, 14);
-        }
+      // Continuous unbroken bottom ArcLen rail
+      const arcRailGrad = ctx.createLinearGradient(padLeft, 0, padLeft + usableW, 0);
+      arcRailGrad.addColorStop(0, "rgba(43, 156, 148, 0.45)");
+      arcRailGrad.addColorStop(0.5, "rgba(0, 113, 227, 0.55)");
+      arcRailGrad.addColorStop(1, "rgba(43, 156, 148, 0.45)");
+      ctx.strokeStyle = arcRailGrad;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(padLeft, yArc);
+      ctx.lineTo(padLeft + usableW, yArc);
+      ctx.stroke();
 
-        ctx.save();
+      // Continuous flowing Bezier warp connectors
+      let lastLabelX = -Infinity;
+      for (let i = 0; i < nTicks; i++) {
+        const lx = padLeft + (linearPositions[i] / maxPos) * usableW;
+        const ax = padLeft + (arcPositions[i] / maxPos) * usableW;
+        const shiftNorm = clamp01(Math.abs(ax - lx) / Math.max(usableW * 0.08, 1));
+
+        const curveGrad = ctx.createLinearGradient(lx, yLinear, ax, yArc);
+        curveGrad.addColorStop(0, "rgba(134, 134, 139, 0.22)");
+        curveGrad.addColorStop(0.5, speedToColor(0.2 + shiftNorm * 0.68, 0.36));
+        curveGrad.addColorStop(1, "rgba(43, 156, 148, 0.52)");
+
+        ctx.strokeStyle = curveGrad;
+        ctx.lineWidth = 1.15 + shiftNorm * 0.55;
         ctx.beginPath();
-        ctx.rect(padX, 0, Math.max(0, revealX - padX), h);
-        ctx.clip();
-
-        ctx.strokeStyle = "rgba(29, 29, 31, 0.12)";
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(padX, yLinear);
-        ctx.lineTo(padX + usableW, yLinear);
+        ctx.moveTo(lx, yLinear + 6);
+        ctx.bezierCurveTo(lx, midY, ax, midY, ax, yArc - 6);
         ctx.stroke();
 
-        ctx.strokeStyle = "rgba(43, 156, 148, 0.52)";
-        ctx.lineWidth = 1.5;
+        // Linear tick
+        ctx.fillStyle = "rgba(110, 110, 115, 0.65)";
+        ctx.fillRect(lx - 1.25, yLinear - 6, 2.5, 12);
+
+        // ArcLen node with subtle halo
+        ctx.fillStyle = "rgba(43, 156, 148, 0.14)";
         ctx.beginPath();
-        ctx.moveTo(padX, yArc);
-        ctx.lineTo(padX + usableW, yArc);
-        ctx.stroke();
+        ctx.arc(ax, yArc, 7.5, 0, Math.PI * 2);
+        ctx.fill();
 
-        for (let i = 0; i < nTicks; i++) {
-          const lx = padX + (linearPositions[i] / maxPos) * usableW;
-          const ax = padX + (arcPositions[i] / maxPos) * usableW;
+        ctx.fillStyle = PALETTE.teal;
+        ctx.beginPath();
+        ctx.arc(ax, yArc, 4.0, 0, Math.PI * 2);
+        ctx.fill();
 
-          ctx.strokeStyle = "rgba(0, 113, 227, 0.24)";
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(lx, yLinear + 5);
-          ctx.bezierCurveTo(lx, (yLinear + yArc) * 0.5, ax, (yLinear + yArc) * 0.5, ax, yArc - 5);
-          ctx.stroke();
-
-          ctx.fillStyle = PALETTE.faint;
-          ctx.fillRect(lx - 1.5, yLinear - 6, 3, 12);
-
-          ctx.fillStyle = PALETTE.teal;
-          ctx.beginPath();
-          ctx.arc(ax, yArc, 4, 0, Math.PI * 2);
-          ctx.fill();
-
+        if (i === 0 || (ax - lastLabelX >= 22)) {
           ctx.font = `500 9px ${CANVAS_MONO}`;
           ctx.fillStyle = PALETTE.muted;
-          ctx.fillText(`s${i}`, ax - 6, yArc + 16);
+          ctx.fillText(`s${i}`, ax - (i >= 10 ? 8 : 5), yArc + 17);
+          lastLabelX = ax;
         }
-        ctx.restore();
+      }
 
-        if (seg === 0 && hintAlpha > 0) {
-          ctx.save();
-          ctx.globalAlpha = hintAlpha;
-          ctx.font = `500 10px ${CANVAS_SANS}`;
-          ctx.fillStyle = PALETTE.faint;
-          const rateHint = studioState.speakingRate < 0.85
+      ctx.restore();
+
+      const hintAlpha = studioState.micActive ? 0.9 : clamp01((progress - 0.65) / 0.25);
+      if (hintAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = hintAlpha;
+        ctx.font = `500 10px ${CANVAS_SANS}`;
+        ctx.fillStyle = PALETTE.faint;
+        const rateHint = studioState.micActive
+          ? "实时语音等弧长重采样 · 自动贴合说话节奏"
+          : studioState.speakingRate < 0.85
             ? "当前慢速拖音，等弧长刻度自动变疏"
             : studioState.speakingRate > 1.15
               ? "当前快速连读，高速段等弧长刻度自动加密"
               : "标准语速，几何弧长均匀对齐";
-          ctx.fillText(rateHint, Math.max(padX, frameW - ctx.measureText(rateHint).width - 10), 14);
-          ctx.restore();
-        }
-
+        ctx.fillText(rateHint, Math.max(padLeft, frameW - ctx.measureText(rateHint).width - 14), 14);
         ctx.restore();
       }
     }
 
-    // Track 4: continuous fingerprint ribbons instead of a wall of cells.
+    // Track 4: ONE continuous high-resolution panoramic 4-layer fingerprint ribbon across full 200% width.
     function drawTrack4(telemetry) {
       const env = prepareCanvas("canvasTrack4");
       if (!env) return;
@@ -1656,15 +2077,33 @@
         || studioState.templates.values().next().value;
       if (!tmplItem) return;
       const tVec = tmplItem.template;
+      const { vector: qVec, segments } = telemetry.barcode;
+      const dim = qVec.length;
 
       const frameW = w / PAN_SEGMENTS;
-      const rowH = Math.max(24, Math.min(38, (h - 100) / 3.1));
-      const y1 = 44;
+      const padLeft = 90;
+      const padRight = 20;
+      const barW = Math.max(120, w - padLeft - padRight);
+      const cellW = barW / dim;
+
+      const rowH = Math.max(26, Math.min(40, (h - 104) / 3.0));
+      const y1 = 46;
       const y2 = y1 + rowH + 20;
       const y3 = y2 + rowH + 20;
-      const progress = sectionProgress("fingerprint");
+      const matchH = Math.max(12, rowH * 0.50);
 
-      function sampleValue(vec, position, dim) {
+      // Sync pinned HTML row labels to exact canvas row vertical centers
+      const labelQ = document.querySelector(".stage-pinned__row--query");
+      const labelT = document.querySelector(".stage-pinned__row--tmpl");
+      const labelM = document.querySelector(".stage-pinned__row--match");
+      if (labelQ) labelQ.style.top = `${(y1 + rowH * 0.5).toFixed(1)}px`;
+      if (labelT) labelT.style.top = `${(y2 + rowH * 0.5).toFixed(1)}px`;
+      if (labelM) labelM.style.top = `${(y3 + matchH * 0.5).toFixed(1)}px`;
+
+      const progress = studioState.micActive ? 1.0 : sectionProgress("fingerprint");
+      const revealX = progress >= 0.995 ? w : (padLeft + Math.max(60, frameW - padLeft - 12) * progress);
+
+      function sampleValue(vec, position) {
         const pos = Math.max(0, Math.min(dim - 1, position));
         const lo = Math.floor(pos);
         const hi = Math.min(lo + 1, dim - 1);
@@ -1672,86 +2111,74 @@
         return vec[lo] * (1 - frac) + vec[hi] * frac;
       }
 
-      function drawRibbon(values, y, rowHeight, padLeft, barW, dim) {
-        const steps = Math.max(180, Math.floor(barW * 1.5));
-        const stepW = barW / steps + 0.65;
+      function drawSmoothRibbon(values, y, rowHeight) {
+        ctx.save();
+        drawRoundedRectPath(ctx, padLeft, y, barW, rowHeight, 7);
+        ctx.clip();
+
+        const steps = Math.min(520, Math.max(240, Math.floor(barW * 0.65)));
+        const stepW = barW / steps + 0.85;
         for (let s = 0; s < steps; s++) {
           const ratio = s / Math.max(steps - 1, 1);
-          const value = sampleValue(values, ratio * (dim - 1), dim);
+          const value = sampleValue(values, ratio * (dim - 1));
           const norm = Math.max(-1, Math.min(1, value * 4.4));
-          const alpha = 0.055 + 0.75 * Math.abs(norm);
+          const alpha = 0.065 + 0.78 * Math.abs(norm);
           const rgb = norm >= 0 ? "0, 113, 227" : "230, 106, 78";
           ctx.fillStyle = `rgba(${rgb}, ${alpha.toFixed(3)})`;
           ctx.fillRect(padLeft + ratio * barW, y, stepW, rowHeight);
         }
-      }
-
-      const matchH = Math.max(10, rowH * 0.48);
-
-      for (let board = 0; board < PAN_SEGMENTS; board++) {
-        const view = board === 0 ? telemetry : (telemetry.continuation || telemetry);
-        const { vector: qVec, segments } = view.barcode;
-        const dim = qVec.length;
-
-        ctx.save();
-        ctx.translate(board * frameW, 0);
-
-        const padLeft = board === 0 ? 82 : 10;
-        const padRight = 10;
-        const barW = Math.max(60, frameW - padLeft - padRight);
-        const cellW = barW / dim;
-        const revealX = padLeft + barW * progress;
-
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(padLeft, 0, Math.max(0, revealX - padLeft), h);
-        ctx.clip();
-
-        // Thin partition accents replace header boxes.
-        for (const seg of segments) {
-          const sx = padLeft + seg.start * cellW;
-          const sw = Math.max(3, (seg.end - seg.start) * cellW - 2);
-          ctx.fillStyle = seg.color;
-          ctx.globalAlpha = 0.72;
-          ctx.fillRect(sx, 20, sw, 2);
-        }
-        ctx.globalAlpha = 1;
-
-        drawRibbon(qVec, y1, rowH, padLeft, barW, dim);
-        drawRibbon(tVec, y2, rowH, padLeft, barW, dim);
-
-        const steps = Math.max(180, Math.floor(barW * 1.5));
-        const stepW = barW / steps + 0.65;
-        for (let s = 0; s < steps; s++) {
-          const ratio = s / Math.max(steps - 1, 1);
-          const q = sampleValue(qVec, ratio * (dim - 1), dim);
-          const t = sampleValue(tVec, ratio * (dim - 1), dim);
-          const match = Math.max(0, 1 - Math.abs(q - t) * 3.8);
-          const rgb = match > 0.55 ? "43, 156, 148" : "230, 106, 78";
-          const alpha = match > 0.55 ? 0.22 + 0.48 * match : 0.30 + 0.35 * (1 - match);
-          ctx.fillStyle = `rgba(${rgb}, ${alpha.toFixed(3)})`;
-          ctx.fillRect(padLeft + ratio * barW, y3, stepW, matchH);
-        }
         ctx.restore();
 
-        ctx.font = `600 9px ${CANVAS_MONO}`;
-        if (board === 0) {
-          ctx.fillStyle = PALETTE.inkSoft;
-          ctx.fillText("当前指纹", 8, y1 + rowH * 0.62);
-          ctx.fillStyle = PALETTE.blue;
-          ctx.fillText("模板指纹", 8, y2 + rowH * 0.62);
-          ctx.fillStyle = PALETTE.faint;
-          ctx.fillText("逐维共振", 8, y3 + matchH * 0.72);
-        } else {
-          ctx.fillStyle = "rgba(134, 134, 139, 0.62)";
-          ctx.fillText(`下一段 · ${view.continuationKey || "后续语音"}`, 10, y1 - 8);
-        }
-
+        // Crisp subtle frame around the ribbon
+        ctx.save();
+        drawRoundedRectPath(ctx, padLeft, y, barW, rowHeight, 7);
+        ctx.strokeStyle = "rgba(29, 29, 31, 0.06)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
         ctx.restore();
       }
 
-      // Segment boundaries live in the slim color ticks above the ribbons.
-      // Keeping the ribbons uninterrupted makes the fingerprint read as one texture.
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(padLeft - 2, 0, Math.max(0, revealX - (padLeft - 2)), h);
+      ctx.clip();
+
+      // Continuous segment accent bars & subtle labels above the ribbons
+      for (const seg of segments) {
+        const sx = padLeft + seg.start * cellW;
+        const sw = Math.max(8, (seg.end - seg.start) * cellW - 4);
+        ctx.fillStyle = seg.color;
+        ctx.globalAlpha = 0.78;
+        drawRoundedRectPath(ctx, sx, 24, sw, 3, 1.5);
+        ctx.fill();
+        ctx.globalAlpha = 0.82;
+        ctx.font = `600 9.5px ${CANVAS_MONO}`;
+        ctx.fillText(seg.label.split(" ")[0], sx + 2, 16);
+      }
+      ctx.globalAlpha = 1;
+
+      drawSmoothRibbon(qVec, y1, rowH);
+      drawSmoothRibbon(tVec, y2, rowH);
+
+      // Resonance / Match row
+      ctx.save();
+      drawRoundedRectPath(ctx, padLeft, y3, barW, matchH, 5);
+      ctx.clip();
+      const steps = Math.min(520, Math.max(240, Math.floor(barW * 0.65)));
+      const stepW = barW / steps + 0.85;
+      for (let s = 0; s < steps; s++) {
+        const ratio = s / Math.max(steps - 1, 1);
+        const q = sampleValue(qVec, ratio * (dim - 1));
+        const t = sampleValue(tVec, ratio * (dim - 1));
+        const match = Math.max(0, 1 - Math.abs(q - t) * 3.8);
+        const rgb = match > 0.55 ? "43, 156, 148" : "230, 106, 78";
+        const alpha = match > 0.55 ? 0.24 + 0.52 * match : 0.30 + 0.36 * (1 - match);
+        ctx.fillStyle = `rgba(${rgb}, ${alpha.toFixed(3)})`;
+        ctx.fillRect(padLeft + ratio * barW, y3, stepW, matchH);
+      }
+      ctx.restore();
+
+      ctx.restore();
     }
 
     // Mode 1 Mini Preview Canvas (Normal vs Slow Dual-Tempo Trajectories)
@@ -2020,6 +2447,106 @@
       });
     }
 
+    function bindStagePanning() {
+      document.querySelectorAll("[data-pan-stage]").forEach((stage) => {
+        const key = stage.dataset.panStage;
+        let dragging = false;
+        let lastX = 0;
+        let pointerId = null;
+
+        stage.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0 && e.pointerType === "mouse") return;
+          if (!studioState.micActive && !isSweepReady(key)) return;
+          dragging = true;
+          pointerId = e.pointerId;
+          lastX = e.clientX;
+          studioState.scrubs[key].velocity = 0.0;
+          stage.classList.add("is-dragging");
+          if (stage.setPointerCapture) stage.setPointerCapture(pointerId);
+        });
+
+        stage.addEventListener("pointermove", (e) => {
+          if (!dragging || e.pointerId !== pointerId) return;
+          const dx = e.clientX - lastX;
+          lastX = e.clientX;
+          const stageWidth = Math.max(120, stage.getBoundingClientRect().width);
+          const deltaPos = -dx / stageWidth;
+          const scrub = studioState.scrubs[key];
+          scrub.position = clamp01(scrub.position + deltaPos);
+          scrub.velocity = deltaPos;
+          updateScrubberUI(key);
+        });
+
+        const endDrag = (e) => {
+          if (!dragging || (pointerId !== null && e.pointerId !== pointerId)) return;
+          dragging = false;
+          stage.classList.remove("is-dragging");
+          if (stage.releasePointerCapture && pointerId !== null) {
+            try { stage.releasePointerCapture(pointerId); } catch (_) {}
+          }
+          pointerId = null;
+        };
+
+        stage.addEventListener("pointerup", endDrag);
+        stage.addEventListener("pointercancel", endDrag);
+
+        stage.addEventListener("wheel", (e) => {
+          if (!studioState.micActive && !isSweepReady(key)) return;
+          if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+          e.preventDefault();
+          const stageWidth = Math.max(120, stage.getBoundingClientRect().width);
+          const scrub = studioState.scrubs[key];
+          scrub.velocity = 0.0;
+          scrub.position = clamp01(scrub.position + e.deltaX / (stageWidth * 1.15));
+          updateScrubberUI(key);
+        }, { passive: false });
+      });
+    }
+
+    function stepPanInertia() {
+      for (const key of SCRUB_KEYS) {
+        const scrub = studioState.scrubs[key];
+        if (!scrub || Math.abs(scrub.velocity) < 0.00025) {
+          if (scrub) scrub.velocity = 0.0;
+          continue;
+        }
+        scrub.position = clamp01(scrub.position + scrub.velocity);
+        scrub.velocity *= 0.88;
+        if (scrub.position <= 0.0 || scrub.position >= 1.0) scrub.velocity = 0.0;
+        updateScrubberUI(key);
+      }
+    }
+
+    function togglePlayPause() {
+      studioState.isPlaying = !studioState.isPlaying;
+      document.getElementById("playIcon").textContent = studioState.isPlaying ? "Ⅱ" : "▶";
+      document.getElementById("playLabel").textContent = studioState.isPlaying ? "暂停" : "继续";
+      updateMicControlsUI();
+      if (studioState.micActive) {
+        showToast(studioState.isPlaying ? "已恢复实时麦克风流" : "已冻结当前语音窗口，可左右拖拽细看");
+      } else {
+        showToast(studioState.isPlaying ? "已恢复实时流" : "已暂停，可仔细查看当前窗口");
+      }
+    }
+
+    function enrollCurrentFocusWindow(customKey = null) {
+      const inputEl = document.getElementById("inputEnrollKey");
+      const key = (customKey || (inputEl ? inputEl.value : "") || "实时语音口令").trim();
+      const t = studioState.lastTelemetry || computeFullTelemetry();
+      const [wStart, wEnd] = t.focusWindow;
+      const slice = studioState.rawFrames.slice(wStart, wEnd);
+      if (slice.length >= 4) {
+        studioState.lastEnrollNormal = slice;
+        studioState.lastEnrollSlow = arcLengthResample2D(slice, slice.length + 4);
+        enrollSequences(key, [slice]);
+        studioState.selectedTemplateKey = key;
+        studioState.activePhraseKey = key;
+        refreshTemplateUI();
+        renderCurrentSnapshot();
+        showToast(`已截取语音窗口 [${wStart}, ${wEnd}] 注册为「${key}」指纹模板`);
+      }
+    }
+
     function bindControls() {
       document.querySelectorAll("[data-scrub-key]").forEach((input) => {
         input.addEventListener("input", (event) => {
@@ -2027,25 +2554,48 @@
           const scrub = studioState.scrubs[key];
           if (!scrub) return;
           const max = Number(event.currentTarget.max) || 1000;
+          scrub.velocity = 0.0;
           scrub.position = clamp01(Number(event.currentTarget.value) / max);
           updateScrubberUI(key);
         });
       });
 
       document.getElementById("btnTogglePlay").addEventListener("click", () => {
-        studioState.isPlaying = !studioState.isPlaying;
-        document.getElementById("playIcon").textContent = studioState.isPlaying ? "Ⅱ" : "▶";
-        document.getElementById("playLabel").textContent = studioState.isPlaying ? "暂停" : "继续";
-        document.getElementById("streamStatusDot").className = studioState.isPlaying
-          ? "status-dot is-live"
-          : "status-dot is-paused";
-        document.getElementById("streamStatusLabel").textContent = studioState.isPlaying ? "实时演示" : "已暂停";
-        showToast(studioState.isPlaying ? "已恢复实时流" : "已暂停，可仔细查看当前窗口");
+        togglePlayPause();
       });
 
       document.getElementById("btnMicStream").addEventListener("click", () => {
-        toggleMicrophoneStream();
+        toggleMicrophoneStream(true);
       });
+
+      const topMicBtn = document.getElementById("btnTopMic");
+      if (topMicBtn) {
+        topMicBtn.addEventListener("click", () => {
+          toggleMicrophoneStream(false);
+        });
+      }
+
+      const dockFreezeBtn = document.getElementById("btnMicFreeze");
+      if (dockFreezeBtn) {
+        dockFreezeBtn.addEventListener("click", () => {
+          togglePlayPause();
+        });
+      }
+
+      const dockEnrollBtn = document.getElementById("btnMicQuickEnroll");
+      if (dockEnrollBtn) {
+        dockEnrollBtn.addEventListener("click", () => {
+          const count = studioState.templates.size + 1;
+          enrollCurrentFocusWindow(`我的语音 #${count}`);
+        });
+      }
+
+      const dockStopBtn = document.getElementById("btnMicStop");
+      if (dockStopBtn) {
+        dockStopBtn.addEventListener("click", () => {
+          stopMicrophoneStream(true);
+        });
+      }
 
       document.getElementById("wavUploadInput").addEventListener("change", (e) => {
         if (e.target.files && e.target.files[0]) {
@@ -2100,8 +2650,8 @@
       document.getElementById("btnPermuteCheck").addEventListener("click", () => {
         const rng = createRng(41 + studioState.frameStepCounter);
         const T = studioState.rawFrames.length;
-        const start = Math.floor(T * 0.3);
-        const end = Math.min(T, start + 24);
+        const start = Math.floor(T * 0.16);
+        const end = Math.min(T, start + 28);
         for (let i = end - 1; i > start; i--) {
           const j = start + Math.floor(rng.nextFloat() * (i - start + 1));
           const tmp = studioState.rawFrames[i];
@@ -2189,24 +2739,11 @@
 
       // Mode 1: Enroll directly from current active focus window
       document.getElementById("btnEnrollFromWindow").addEventListener("click", () => {
-        const inputEl = document.getElementById("inputEnrollKey");
-        const key = (inputEl.value || "实时窗口口令").trim();
-        const t = studioState.lastTelemetry || computeFullTelemetry();
-        const [wStart, wEnd] = t.focusWindow;
-        const slice = studioState.rawFrames.slice(wStart, wEnd);
-        if (slice.length >= 4) {
-          studioState.lastEnrollNormal = slice;
-          studioState.lastEnrollSlow = arcLengthResample2D(slice, slice.length + 4);
-          enrollSequences(key, [slice]);
-          studioState.selectedTemplateKey = key;
-          studioState.activePhraseKey = key;
-          refreshTemplateUI();
-          renderCurrentSnapshot();
-          showToast(`已截取当前窗口 [${wStart}, ${wEnd}] 注册为「${key}」指纹模板`);
-        }
+        enrollCurrentFocusWindow();
       });
 
       bindDrawers();
+      bindStagePanning();
     }
 
     function initScrollStory() {
@@ -2234,7 +2771,7 @@
       targets.forEach((target) => observer.observe(target));
     }
 
-    // The snapshot stays still. Only each section's reveal boundary advances.
+    // 60fps main loop: smooth reveal sweeps, inertial drag panning, and real-time live mic updates.
     let lastFrameTime = performance.now();
     let lastAnimationTime = lastFrameTime;
     let frameCounter = 0;
@@ -2265,7 +2802,27 @@
           lastFrameTime = now;
         }
 
-        if (studioState.isPlaying) advanceSweeps(elapsed);
+        stepPanInertia();
+
+        if (studioState.micActive && studioState.isPlaying) {
+          micStepAccumMs += elapsed;
+          let pushed = false;
+          let guard = 0;
+          while (micStepAccumMs >= MIC_FRAME_STEP_MS && guard < 3) {
+            micStepAccumMs -= MIC_FRAME_STEP_MS;
+            const { row, wave } = sampleLiveMicrophoneFrame();
+            pushSingleFrame(row, wave);
+            studioState.frameStepCounter++;
+            pushed = true;
+            guard++;
+          }
+          if (pushed) {
+            refreshDisplayTelemetry(false);
+          }
+        } else if (studioState.isPlaying) {
+          advanceSweeps(elapsed);
+        }
+
         const telemetry = studioState.displayTelemetry || refreshDisplayTelemetry();
         renderAllUI(telemetry);
         requestAnimationFrame(step);
