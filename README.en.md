@@ -16,6 +16,13 @@
 
 <p align="center"><strong>Turn a frozen speech trajectory into interpretable temporal views, with every operator shown live.</strong></p>
 
+
+## Architecture Pipeline
+
+<p align="center">
+  <img src="docs/assets/pipeline_architecture.jpg" alt="Disentangle-Acoustic-Print Cross-Voice Acoustic Fingerprinting Pipeline" width="1000" />
+</p>
+
 ## The Running Interface
 
 <p align="center">
