@@ -16,6 +16,13 @@
 
 <p align="center"><strong>把一段冻结语音轨迹拆成可以解释的时序视图，并让每个算子实时显示出来。</strong></p>
 
+
+## 方法流程图 · Architecture Pipeline
+
+<p align="center">
+  <img src="docs/assets/pipeline_architecture.jpg" alt="Disentangle-Acoustic-Print 跨音色声学指纹解耦架构流程图" width="1000" />
+</p>
+
 ## 正在运行的界面
 
 <p align="center">
