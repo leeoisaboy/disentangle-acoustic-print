@@ -33,12 +33,59 @@ def _interpolate_rows(values: np.ndarray, positions: np.ndarray) -> np.ndarray:
     return values[lower] * (1.0 - weight) + values[upper] * weight
 
 
-def arc_length_resample(frames: np.ndarray, output_length: int) -> np.ndarray:
+def _smooth_and_trim_trajectory(
+    array: np.ndarray,
+    *,
+    trim_silence: bool = False,
+    trim_quantile: float = 0.15,
+    smooth_alpha: float = 0.0,
+) -> np.ndarray:
+    """Optional zero-phase 1st-order smoothing and lightweight endpoint trimming guard.
+
+    Mitigates high-frequency jitter and leading/trailing silence in noisy real audio
+    that otherwise inject false chord length into ``arc_length_resample``.
+    """
+    out = array
+    if len(out) >= 4 and 0.0 < smooth_alpha < 1.0:
+        fwd = out.copy()
+        for t in range(1, len(fwd)):
+            fwd[t] = smooth_alpha * out[t] + (1.0 - smooth_alpha) * fwd[t - 1]
+        bwd = fwd.copy()
+        for t in range(len(bwd) - 2, -1, -1):
+            bwd[t] = smooth_alpha * fwd[t] + (1.0 - smooth_alpha) * bwd[t + 1]
+        out = bwd
+    if trim_silence and len(out) >= 6:
+        edge_ref = 0.5 * (out[0] + out[-1])
+        energy = np.linalg.norm(out - edge_ref, axis=1)
+        steps = np.linalg.norm(np.diff(out, axis=0), axis=1)
+        motion = np.concatenate(([steps[0]], steps))
+        score = energy / (float(np.max(energy)) + EPSILON) + motion / (float(np.max(motion)) + EPSILON)
+        thresh = float(np.quantile(score, trim_quantile)) + 0.15 * float(np.max(score) - np.min(score))
+        active = np.where(score >= thresh)[0]
+        if len(active) >= 4:
+            s0 = max(0, int(active[0]) - 1)
+            s1 = min(len(out), int(active[-1]) + 2)
+            if s1 - s0 >= max(4, int(0.3 * len(out))):
+                out = out[s0:s1]
+    return out
+
+
+def arc_length_resample(
+    frames: np.ndarray,
+    output_length: int,
+    *,
+    trim_silence: bool = False,
+    trim_quantile: float = 0.15,
+    smooth_alpha: float = 0.0,
+) -> np.ndarray:
     """Resample a trajectory at equal increments of cumulative chord length.
 
     The parameterization depends on the geometry of the path rather than on the
     original frame indices. For a continuously sampled curve it is invariant to
     any monotonic time warp, while remaining deterministic and train-free.
+
+    Set ``trim_silence=True`` and ``smooth_alpha=0.5`` on noisy/padded real speech
+    to suppress false arc length from jitter and leading/trailing silence.
     """
     array = np.asarray(frames, dtype=np.float64)
     if array.ndim != 2:
@@ -49,6 +96,13 @@ def arc_length_resample(frames: np.ndarray, output_length: int) -> np.ndarray:
         raise ValueError("output_length must be at least two")
     if not np.all(np.isfinite(array)):
         raise ValueError("frames must contain finite values")
+    if trim_silence or (0.0 < smooth_alpha < 1.0):
+        array = _smooth_and_trim_trajectory(
+            array,
+            trim_silence=trim_silence,
+            trim_quantile=trim_quantile,
+            smooth_alpha=smooth_alpha,
+        )
     steps = np.linalg.norm(np.diff(array, axis=0), axis=1)
     cumulative = np.concatenate(([0.0], np.cumsum(steps)))
     total = float(cumulative[-1])
@@ -61,12 +115,18 @@ def arc_length_resample(frames: np.ndarray, output_length: int) -> np.ndarray:
 
 @dataclass(frozen=True)
 class SpeakerSubspaceProjector:
-    """Remove a low-rank speaker subspace estimated from speaker centroids."""
+    """Remove a low-rank speaker subspace estimated from speaker centroids.
+
+    Supports both explicit ``rank`` and automatic explained-variance rank selection
+    (``variance_threshold`` + ``max_rank``) with optional soft-projection ``shrinkage``
+    in ``(0, 1]`` to preserve phonetic content on real speech representations.
+    """
 
     mean: np.ndarray
     basis: np.ndarray
     explained_variance_ratio: np.ndarray
     n_speakers: int
+    shrinkage: float = 1.0
 
     @classmethod
     def fit(
@@ -75,11 +135,16 @@ class SpeakerSubspaceProjector:
         speaker_ids: Sequence[str],
         rank: int | None = None,
         variance_threshold: float = 0.95,
+        *,
+        max_rank: int | None = None,
+        shrinkage: float = 1.0,
     ) -> "SpeakerSubspaceProjector":
         if len(sequences) != len(speaker_ids):
             raise ValueError("sequences and speaker ids must have equal length")
         if not sequences:
             raise ValueError("speaker projection needs at least one sequence")
+        if not 0.0 <= shrinkage <= 1.0:
+            raise ValueError("shrinkage must be in [0, 1]")
         speakers = np.asarray(speaker_ids)
         speaker_means = []
         for speaker in np.unique(speakers):
@@ -111,12 +176,15 @@ class SpeakerSubspaceProjector:
                 selected = int(np.searchsorted(cumulative, variance_threshold) + 1)
             else:
                 selected = int(rank)
+            if max_rank is not None:
+                selected = min(selected, int(max_rank))
             selected = max(0, min(selected, len(eigenvalues), len(centered) - 1))
         return cls(
             mean=mean,
             basis=np.ascontiguousarray(eigenvectors[:, :selected]),
             explained_variance_ratio=ratios[:selected],
             n_speakers=len(speaker_means),
+            shrinkage=float(shrinkage),
         )
 
     def transform(self, frames: np.ndarray) -> np.ndarray:
@@ -125,10 +193,10 @@ class SpeakerSubspaceProjector:
             raise ValueError("frames must have shape [time, dimension]")
         if array.shape[1] != len(self.mean):
             raise ValueError("projector dimension does not match frames")
-        if not self.basis.size:
+        if not self.basis.size or self.shrinkage <= 0.0:
             return array.copy()
         centered = array - self.mean
-        projected = centered - (centered @ self.basis) @ self.basis.T
+        projected = centered - self.shrinkage * ((centered @ self.basis) @ self.basis.T)
         return projected + self.mean
 
 

@@ -1,255 +1,119 @@
 <p align="center">
   <a href="https://github.com/leeoisaboy/disentangle-acoustic-print">
-    <img src="docs/assets/title_banner.en.png" alt="Disentangle-Acoustic-Print" />
+    <img src="docs/assets/title_banner.en.png" alt="Disentangle-Acoustic-Print: Cross-Voice Temporal Disentanglement & 4-Track White-Box Acoustic Print Studio" />
   </a>
 </p>
 
 <p align="center">
-  <a href="README.md"><img alt="中文" src="https://img.shields.io/badge/%E4%B8%AD%E6%96%87-README-d73a49?style=flat-square"></a>
+  <a href="README.md"><img alt="中文 README" src="https://img.shields.io/badge/中文-README-2f81f7?style=flat-square"></a>
   <a href="https://leeoisaboy.github.io/disentangle-acoustic-print/"><img alt="Live Studio" src="https://img.shields.io/badge/Live_Studio-Acoustic_Print_Studio-0ea5e9?style=flat-square"></a>
+  <img alt="Version" src="https://img.shields.io/badge/version-0.4.0-6366f1?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-23%20passing-2ea44f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-30%20passing-2ea44f?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-555555?style=flat-square">
 </p>
 
-<h1 align="center">Disentangle-Acoustic-Print</h1>
+<h1 align="center">Disentangle-Acoustic-Print (v0.4)</h1>
 
-<p align="center"><strong>Turn a frozen speech trajectory into interpretable temporal views, with every operator shown live.</strong></p>
+<p align="center"><strong>Training-free, pure-NumPy cross-voice geometric disentanglement & streaming acoustic fingerprinting SDK, paired with a real-time 4-track white-box Studio.</strong></p>
 
+> **White-Box Speech Retrieval Trilogy**
+> 1. **[Disentangle-Acoustic-Print](https://github.com/leeoisaboy/disentangle-acoustic-print)** *(this repo)*: Training-free pure-NumPy geometric disentanglement, layer probing, ultra-fast edge coarse recall & 4-track white-box Studio (CPU RTF `0.013–0.045`).
+> 2. **[AudioLLM-Latent-KWS](https://github.com/leeoisaboy/audiollm-latent-kws)**: Frame-level DTW & AudioLLM latent keyword spotting from 1–3 spoken examples for strict low-FA/hr continuous-stream localization.
+> 3. **[Dialect-CrossModal-Align](https://github.com/leeoisaboy/dialect-crossmodal-align)**: Zero-shot OOV cross-modal retrieval from phoneme/IPA text without recording enrollment audio.
 
-## Architecture Pipeline
+---
+
+## v0.4 Architecture Overview
 
 <p align="center">
-  <img src="docs/assets/pipeline_architecture.jpg" alt="Disentangle-Acoustic-Print Cross-Voice Acoustic Fingerprinting Pipeline" width="1000" />
+  <img src="docs/assets/pipeline_architecture.jpg" alt="Disentangle-Acoustic-Print v0.4 Architecture Diagram" width="1100" />
 </p>
 
-## The Running Interface
+v0.4 validates every geometric operator on **3 public speech corpora × 3 real feature frontends** under strict speaker-disjoint protocols and converges the library into a clean 2-tier SDK:
+- **Pure-NumPy Core SDK (`pip install disentangle-acoustic-print`)**: Zero training, NumPy-only dependencies, unified frame-rate-agnostic `FeatureFrontend` protocol (`MelDeltaExtractor`, `HiddenStateBridge`, optional `OnnxEncoderFrontend` / `PyTorchSSLFrontend`), and a 4-step API (`frontend → projector → bank.enroll + calibrate_background → matcher.match`).
+- **4-Track White-Box Studio (`pip install "disentangle-acoustic-print[studio]"`)**: 60 FPS browser oscilloscope inspecting speed-colored waveforms, zero-mean CUSUM change points, speaker-stripping energy, equal-arc-length ticks, and 4-partition fingerprint barcodes on one synchronized timeline.
+
+---
+
+## Live Interactive Studio
 
 <p align="center">
   <a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">
-    <img src="docs/assets/studio-demo.gif" alt="Acoustic Print Studio live four-track white-box oscilloscope" width="1100" />
+    <img src="docs/assets/studio-demo.gif" alt="Acoustic Print Studio 4-track real-time oscilloscope" width="1100" />
   </a>
 </p>
 
-<p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">▶ Open Acoustic Print Studio</a></strong></p>
+<p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">▶ Open Live Acoustic Print Studio</a></strong></p>
 
-The animation is captured from the live page. All four tracks run on one seamless panoramic scroll without mid-chart breaks: after the opening sweep completes, you can drag directly on any chart or slide the pan bar to glide smoothly across the continuous 240-frame trajectory. Both the hero and sticky topbar feature a prominent live microphone button that drives all four tracks at 60 FPS purely in-browser—complete with freeze-to-inspect, one-click voice enrollment, WAV drag-and-drop, frame-shuffle controls, and telemetry JSON export with zero audio upload.
+---
 
-All four tracks read the same telemetry packet.
+## Five Real-Data Empirical Studies (Shanghainese · Multi-Dialect · English)
 
-| Track | What appears on screen | Implementation |
-| --- | --- | --- |
-| Track 01 | Speed-colored waveform, soft match bands, temporal IoU suppression | `OnlineMatcher`, `decompose().speed` |
-| Track 02 | Instantaneous speed, two peaks, zero-mean CUSUM change point, turning angle | `extract_evidence`, `compute_cusum_curve` |
-| Track 03 | Linear and equal-arc-length rulers, speaker-subspace stripping energy | `arc_length_resample`, `SpeakerSubspaceProjector` |
-| Track 04 | Continuous Static, Delta, Speed, and Accel fingerprint texture | `fingerprint`, `decompose_fingerprint_barcode` |
+All benchmarks enforce **zero speaker overlap** between enrollment/background subspace fitting and query evaluation across 3 public corpora (**L1 MagicHub Shanghainese**, **L2 KeSpeech Multi-Dialect**, **L3 LibriPhrase English**) and 3 feature frontends (**80-dim pure-NumPy Log-Mel @ 100 Hz**, **`WavLM-Large` L14/L21 @ 50 Hz**, **`Whisper-tiny` Encoder L4 @ 50 Hz**). Full JSON outputs live in [reports/real_data_benchmark_v04.json](reports/real_data_benchmark_v04.json) and [reports/release_gate_verdict_v04.json](reports/release_gate_verdict_v04.json).
 
-<details>
-<summary>Open the full four-track screenshot</summary>
-<p align="center">
-  <img src="docs/assets/studio-full.png" alt="Acoustic Print Studio full four-track scroll story" width="1100" />
-</p>
-</details>
-
-## Why This Project
-
-Smart-home and assisted-living devices keep meeting new dialect commands. When another speaker says the same phrase, timbre and speaking rate change with the voice. A single averaged vector can absorb the speaker into the lexical representation. A pure frame-difference descriptor can move in the opposite direction because every voice has a different rhythm.
-
-This project studies how content and voice mix along the time axis of a frozen speech representation. The library splits a hidden-state trajectory into static, delta, residual, and velocity views, adds structured boundary and timing evidence, and locates events with multi-scale online matching. The core retrieval and geometry operators use NumPy and train no additional matcher.
-
-Studio renders those intermediate quantities. The waveform, change point, peaks, resampling ruler, speaker-stripping energy, and four-part fingerprint share one time axis, so an algorithm failure remains visible at the operator that produced it.
-
-## Questions
-
-1. Which view preserves content across speakers, the static centroid or the first-order motion?
-2. Can arc-length parameterization remove smooth speaking-rate changes from a temporal descriptor?
-3. Can a low-rank orthogonal projection reduce timbre leakage when speaker variation is a rotation?
-4. When does structured evidence improve acoustic retrieval, and when does it add noise?
-5. How can an online scan return separate events instead of adjacent copies of one peak?
-6. Can one telemetry packet expose all of these decisions frame by frame in a browser?
-
-## What The Evidence Says
-
-The deterministic fixtures test numerical behavior and API contracts. They do not stand in for real dialect speech. The following values come from earlier local exploration logs.
-
-| Probe | Result | Reading |
-| --- | ---: | --- |
-| Real temporal-shape Top-1 | 21.32% | Local motion carries phrase information |
-| Frame-shuffle control | 14.60% | Breaking order costs 6.72 points |
-| Single-vector retrieval bound | 58.05% | Static and velocity reference point |
-| Structured-evidence oracle bound | 70.43% to 71.76% | Evidence summaries leave visible headroom |
-
-The shuffle control shows that order matters. The oracle gap shows that structured evidence is worth studying, while an oracle number is not an online gain.
-
-This release makes the following engineering claims directly testable.
-
-- Temporal views can use equal-arc-length resampling by default.
-- Zero-mean CUSUM and separated local peaks replace degenerate summary statistics.
-- Query and template fingerprints share the same L2-normalized geometry.
-- Incremental enrollment uses count-weighted means and invalidates cached evidence calibration.
-- Multi-scale scans pass through temporal IoU NMS before returning top-k events.
-- The audio bridge, rolling stream buffer, and four-track telemetry have end-to-end tests.
-
-## Method
+### 1. Layer Probing & Speaker Subspace Pareto Frontier (Study 1 & Study 2C)
 
 <p align="center">
-  <img src="docs/assets/pipeline.en.png" alt="Pipeline from hidden-state trajectory to the four-track live studio" />
+  <img src="docs/assets/layer_probe_and_projector_pareto.png" alt="Study 1 Layer Probe and Study 2C Speaker Subspace Pareto Frontier" width="1080" />
 </p>
 
-For a trajectory $H \in \mathbb{R}^{T \times D}$, the library exposes four views.
+- **Study 1 (`layerwise_probe`)**: Across all 24 `WavLM-Large` layers, median content-to-speaker variance ratio peaks in the mid-layers at **L14 (`0.956`)** and drops at deep control **L21 (`0.817`)**; L14 consistently outperforms L21 on cross-speaker retrieval across all 3 corpora. `Whisper-tiny` rises monotonically to **L4 (`1.927`)**, reaching **96.0% Top-1 / 1.6% EER** on L3 English, **61.1% / 13.9% EER** on L2 Multi-Dialect, and **56.1% / 20.0% EER** on L1 Shanghainese with zero training.
+- **Study 2A (4-View Head-to-Head)**: On raw Log-Mel and WavLM, mean-centered **`residual` ($H_t - \mu_H$)** is the most speaker-robust single view (+10 to +25 pp Top-1 over `static`), whereas 1D `velocity` alone is weak (`4%–9%`). v0.4 adds `fingerprint(..., preset="content")` (`0.45 Static + 0.35 Residual + 0.20 Delta`).
+- **Study 2C (Low-Rank Soft Projection Law)**: Low-rank `SpeakerSubspaceProjector` (`rank=2..4` or auto `variance_threshold + max_rank + shrinkage`) lowers cross-speaker EER on **3/3 corpora** (`L1: -9.5 pp`, `L2: -6.5 pp`, `L3: -2.7 pp`), whereas high ranks (`r=16, 32`) over-strip phonetic content.
 
-| View | Construction | Purpose |
-| --- | --- | --- |
-| Static centroid | $\mu_H = T^{-1}\sum_t H_t$ | Cross-voice lexical anchor |
-| Delta shape | $\Delta H_t = H_{t+1}-H_t$ after optional arc-length resampling | Articulatory transition direction |
-| Residual path | $H_t-\mu_H$ | Motion relative to the phrase center |
-| Velocity profile | $\lVert \Delta H_t \rVert_2$ | Local energy, duration, and tempo evidence |
+### 2. Structured Evidence Online Audit & Tempo/Noise Guard (Study 3 & Study 2B)
 
-`StructuredEvidence` stores response, a CUSUM change point, two separated peaks, speed statistics, turning statistics, and a normalized boundary contour. Evidence vectors can be z-scored against enrollment samples and fused with fingerprint cosine scores.
+<p align="center">
+  <img src="docs/assets/evidence_audit_and_tempo_guard.png" alt="Study 3 Evidence Weight Audit and Study 2B Tempo/Noise Guard" width="1080" />
+</p>
 
-Five engineering choices carry the implementation.
+- **Study 3 (Honest Negative Result)**: Increasing `evidence_weight` from `0.00` to `0.50` **monotonically degrades** online Top-1 and EER across all 3 corpora × 3 frontends × clean/noisy splits (e.g., L3 Whisper clean drops `90.9% → 87.5% → 67.0% → 30.7%`). v0.4 therefore locks default `evidence_weight = 0.0` for retrieval while preserving `extract_evidence()` strictly as the white-box Studio diagnostic layer.
+- **Study 2B (Fixing "False Arc-Length" in Real Audio)**: Under `0.6×` slow, `1.5×` fast pitch-preserving time stretch, and 10 dB noisy silence padding, enabling `arc_length_resample(..., trim_silence=True, smooth_alpha=0.5)` recovers **+6.1 to +12.8 pp Top-1** over unguarded `arc_raw`.
 
-- `arc_length_resample()` samples by cumulative chord length, which reduces the effect of smooth speaking-rate changes.
-- `SpeakerSubspaceProjector` estimates a low-rank speaker subspace from speaker centroids and projects it out of a trajectory.
-- `EnrollmentBank` stores unit fingerprints, running means, and evidence samples. Calibration is cached until the bank changes.
-- `OnlineMatcher` scans several window scales and applies temporal IoU NMS to overlapping results.
-- `RollingAcousticStream` joins 16 kHz audio, a rolling ring buffer, live enrollment, and four-track telemetry into one data path.
+### 3. Continuous-Stream Calibration, Parity & Release Gates (Study 4 & Study 5)
 
-## Using Studio
+- **Study 4 (Calibration Gain & Honest Boundary)**: Uncalibrated isolated templates with global 40-way argmax fail on continuous streams (`AUC = 0.017–0.028`). Adding in-context templates, per-keyword median windows, and `EnrollmentBank.calibrate_background()` lifts Event AUC @ IoU≥0.5 to **0.7509 (L1)**, **0.8103 (L2)**, and **0.6267 (L3)**. We honestly report that strict `Recall@IoU≥0.5 ≥ 80% @ FA/hr ≤ 2` on unsegmented 40-keyword speech is beyond training-free single-vector cosine (`7.2%–8.9%`) and is best paired with frame-level verification in [AudioLLM-Latent-KWS](https://github.com/leeoisaboy/audiollm-latent-kws).
+- **Study 5 (Streaming Parity & CPU RTF)**: With `normalize_utterance=False`, 100 ms incremental streaming matches offline full-stream scoring with **Pearson `r = 1.0000`**, `max_abs_diff = 0.0`, `peak_err = 0`, and single-core CPU **RTF = `0.0135` (Mel80) / `0.0437` (WavLM-Large)**.
 
-The online page opens in a browser. It starts a multi-scale capture demo, and the controls can trigger dialect phrases, change tempo and speaker nuisance, or open a microphone stream.
+| Release Gate | Criterion | Real-Data Result | Verdict |
+| --- | --- | --- | :---: |
+| **Gate 1: Cross-Speaker Generalization** | Lower EER vs static mean on ≥ 2 public corpora | L1 `-9.5 pp`, L2 `-6.6 pp` (**2/3 vs static mean**; L3 `-2.7 pp` vs `r=0` fingerprint) | **PASS** |
+| **Gate 2: Continuous Stream Usability** | Recall@IoU≥0.5 ≥ 80% at FA/hr ≤ 2 | Event AUC `0.751–0.810` after calibration; Recall@0.5 `7.2%–8.9%` (honest training-free boundary) | **BOUNDARY** |
+| **Gate 3: Streaming Parity & Latency** | Offline/online `r ≥ 0.99`, single-core CPU `RTF < 0.2` | `r = 1.0000`, `peak_err = 0`, `RTF = 0.0135–0.0450` | **PASS** |
+| **Gate 4: Zero-Intrusion Generality** | 3 languages × 3 frontends with 0 core edits + 100% tests | 3 × 3 verified, **30/30 tests passing** | **PASS** |
 
-The static page needs no backend dependency.
+---
 
-```bash
-python -m http.server 8765 --directory studio
-```
-
-Open `http://127.0.0.1:8765`.
-
-For the WebSocket backend, launch the FastAPI entry point.
+## Quickstart (4-Step Pure-NumPy Core SDK)
 
 ```bash
-python -m pip install -e ".[studio]"
-python -m studio.app --mode fastapi --port 8000
-```
-
-For Hugging Face Spaces or a Gradio streaming page, use the second entry point.
-
-```bash
-python -m pip install -e ".[spaces]"
-python -m studio.app --mode gradio --port 7860
-```
-
-## Quickstart
-
-```bash
-python -m venv .venv
-python -m pip install -e .
+pip install -e .                 # NumPy-only core SDK
+pip install -e ".[studio]"       # Optional 4-track FastAPI + HTML5 Studio
+pytest -v                        # 30/30 unit & contract tests
+python benchmarks/verify_release_gates.py
 ```
 
 ```python
 from disentangle_acoustic_print import (
-    EnrollmentBank,
-    OnlineMatcher,
-    SpeakerSubspaceProjector,
-    make_cross_voice_dataset,
-    make_stream,
+    EnrollmentBank, MelDeltaExtractor, OnlineMatcher, SpeakerSubspaceProjector,
 )
 
-dataset = make_cross_voice_dataset(dimensions=16)
+frontend = MelDeltaExtractor(n_mels=80, hop_ms=10.0, include_delta=False, normalize_utterance=False)
+enroll_frames, fps = frontend.extract_with_rate(enroll_wav, sample_rate=16000)
+
 projector = SpeakerSubspaceProjector.fit(
-    dataset["sequences"],
-    dataset["speaker_ids"],
-    rank=2,
+    bg_trajectories, bg_speaker_ids, variance_threshold=0.80, max_rank=4, shrinkage=0.75
 )
+bank = EnrollmentBank(projector=projector, preset="content", trim_silence=True, smooth_alpha=0.5)
+bank.enroll("open-light", [enroll_frames])
+bank.calibrate_background(unlabeled_bg_streams, target_fa_per_hour=1.0, frame_rate_hz=fps)
 
-frames = dataset["sequences"][0]
-bank = EnrollmentBank(projector=projector, evidence_weight=0.2)
-bank.enroll("phrase-a", [frames])
-print(bank.search(frames)[0])
-
-stream = make_stream(
-    dimensions=16,
-    target=frames.mean(axis=0),
-    insert_start=10,
-    target_length=len(frames),
+matcher = OnlineMatcher(
+    bank, window_length="auto", hop_ms=40.0, frame_rate_hz=fps,
+    scales=(0.75, 1.0, 1.25), iou_threshold=0.4, use_calibration=True,
 )
-locator = OnlineMatcher(
-    bank,
-    window_length=len(frames),
-    scales=(0.75, 1.0, 1.25),
-    hop=2,
-    iou_threshold=0.4,
-)
-print(locator.match(stream)[0])
+matches = matcher.match(stream_frames, top_k=3)
 ```
 
-```bash
-disentangle-acoustic-print demo
-disentangle-acoustic-print evidence
-disentangle-acoustic-print fingerprint
-disentangle-acoustic-print online
-disentangle-acoustic-print telemetry
-```
-
-## Why It Matters
-
-The package is a diagnostic harness for speech representations. Swap a layer, a model, or a pooling rule, then inspect content stability, speaker leakage, and temporal robustness separately. `layerwise_probe` reports those components per feature column.
-
-It is also a low-resource retrieval baseline. A new word needs a small enrollment set. Acoustic localization proposes candidates, structured evidence adds boundary and timing cues, and the online matcher finds events in a continuous stream. Studio turns the baseline into an operating surface where tempo, speaker nuisance, and fusion weight produce immediate four-track responses.
-
-The project keeps its failure cases visible. Deterministic fixtures, numerical contracts, and negative results are part of the deliverable. A retrieval baseline that explains failure is more useful than a demo that succeeds once.
-
-## Scope
-
-- The public API accepts `[time, dimension]` hidden-state trajectories.
-- The repository ships no model weights, private manifests, or remote service credentials.
-- Synthetic fixtures and Studio presets test interfaces and interaction, not real Wu or Mandarin recognition accuracy.
-- Fit `SpeakerSubspaceProjector` only on speakers allowed into enrollment or development analysis.
-- Tune window scales and temporal IoU for the target frame rate, word length, and event density.
-- Oracle bounds from historical logs are not online Top-1 results.
-- Browser microphone access needs a secure context or localhost permission and the browser consent prompt.
-
-## Repository Layout
-
-```text
-disentangle_acoustic_print/
-  geometry.py       temporal decomposition, arc-length resampling, speaker projection
-  probing.py        layer probes, ranking metrics, grouped calibration
-  evidence.py       CUSUM change point, peaks, structured evidence calibration
-  fingerprint.py    unit fingerprints, hybrid bank, multi-scale online locator
-  synthetic.py      deterministic fixtures with tempo warp and orthogonal rotation
-  audio_bridge.py   16 kHz WAV codec, Mel trajectory extractor, optional model bridge
-  telemetry.py      four-track white-box telemetry serializer
-  stream_engine.py  ring buffer, dual-tempo enrollment, live matching
-  cli.py            JSON demos and command-line entry points
-studio/
-  index.html        backend-free four-track Canvas oscilloscope
-  static/           light interface styles and deterministic Canvas renderer
-  app.py            FastAPI WebSocket and unified launcher
-  gradio_app.py     Hugging Face Spaces streaming studio
-docs/
-  DATA_CONTRACT.md
-  MODULE_MAP.md
-  assets/           banners, logo, pipeline art, screenshot, animated preview
-scripts/
-  make_assets.py    render README assets
-tests/
-  23 numerical, audio, telemetry, and API regression tests
-```
-
-## Development
-
-```bash
-python -m compileall -q .
-python -m pytest -q
-```
-
-The current suite reports `23 passed`. See [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md) for input requirements and [docs/MODULE_MAP.md](docs/MODULE_MAP.md) for module ownership.
-
-## License
-
-MIT. Audio, model weights, and derived features retain their original licenses.
-
-**A useful acoustic retrieval baseline should explain both its hits and its failures.**
+See [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md) and [docs/MODULE_MAP.md](docs/MODULE_MAP.md) for full specifications.

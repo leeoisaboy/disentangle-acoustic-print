@@ -4,13 +4,14 @@ The implementation consolidates the core geometric operators and the non-invasiv
 
 | Public module | Consolidated concern | Original / Studio focus |
 | --- | --- | --- |
-| `geometry.py` | Trajectory algebra, arc-length resampling, speaker projection, temporal controls, cross-voice consistency | `v82`, `v90`, `v90c` |
-| `probing.py` | Rank AUC, response calibration, variance attribution | `v82`, `v90c` |
-| `evidence.py` | CUSUM change point, separated peaks, evidence calibration | `v89`, `v90b`, `v91` |
-| `fingerprint.py` | Unit fingerprint, hybrid enrollment bank, multi-scale online locator with temporal NMS | `v89`, `v92`, `v93` |
-| `audio_bridge.py` | Sub-millisecond 16 kHz `MelDeltaExtractor`, `.wav` codec, and optional `HiddenStateBridge` | Acoustic Print Studio |
+| `geometry.py` | Trajectory algebra, VAD/smoothing-guarded `arc_length_resample`, soft low-rank `SpeakerSubspaceProjector`, cross-voice consistency | Core SDK (NumPy-only) |
+| `probing.py` | Rank AUC, response calibration, `layerwise_probe` content-to-speaker variance attribution | Core SDK (NumPy-only) |
+| `evidence.py` | CUSUM change point, separated peaks, evidence calibration (white-box diagnostic layer) | Core SDK + Diagnostics |
+| `fingerprint.py` | Unit fingerprint (`legacy` / `content`), `EnrollmentBank` with `calibrate_background()`, ms/auto-window `OnlineMatcher` with temporal NMS | Core SDK (NumPy-only) |
+| `audio_bridge.py` | Unified `FeatureFrontend` protocol, streaming-safe `MelDeltaExtractor`, `HiddenStateBridge`, optional `OnnxEncoderFrontend` & `PyTorchSSLFrontend` | Frontend Adapters |
 | `telemetry.py` | 4-track white-box telemetry serializer (`build_telemetry_packet`) | Acoustic Print Studio |
-| `stream_engine.py` | `RollingAcousticStream` ring buffer, 3-second dual-tempo enrollment, live sliding-window matching | Acoustic Print Studio |
+| `stream_engine.py` | Frame-rate-agnostic `RollingAcousticStream` ring buffer, dual-tempo enrollment, live sliding-window matching | Acoustic Print Studio |
+| `benchmarks/` | Public multi-dialect benchmark suite & 4-gate automated release verifier (`verify_release_gates.py`) | Real-Data Verification |
 | `studio/app.py` | Plan A FastAPI WebSocket + REST server and unified CLI launcher | Acoustic Print Studio |
 | `studio/gradio_app.py` | Plan B Gradio streaming studio for Hugging Face Spaces | Acoustic Print Studio |
 | `studio/index.html` | Light, progressive-disclosure HTML5 Canvas 4-track white-box oscilloscope | Acoustic Print Studio |

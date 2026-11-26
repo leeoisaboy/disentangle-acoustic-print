@@ -27,12 +27,15 @@ class RollingAcousticStream:
     max_frames: int = 120
     dimension: int = 16
     output_length: int = 8
-    evidence_weight: float = 0.25
+    evidence_weight: float = 0.0
     window_length: int = 16
     scales: tuple[float, ...] = (0.75, 1.0, 1.25)
     hop: int = 2
     iou_threshold: float = 0.4
     match_threshold: float = 0.42
+    frame_rate_hz: float = 50.0
+    window_ms: float | None = None
+    hop_ms: float | None = None
     extractor: MelDeltaExtractor | HiddenStateBridge | None = None
 
     _frames: np.ndarray = field(init=False, repr=False)
@@ -49,11 +52,22 @@ class RollingAcousticStream:
             raise ValueError("max_frames must be at least 12")
         if self.extractor is None:
             n_mels = max(2, self.dimension // 2)
+            hop_ms = 1000.0 / max(self.frame_rate_hz, 1.0)
             self.extractor = MelDeltaExtractor(
                 n_mels=n_mels,
+                hop_ms=hop_ms,
                 include_delta=(self.dimension % 2 == 0),
+                normalize_utterance=False,
             )
             self.dimension = self.extractor.dimension
+            self.frame_rate_hz = self.extractor.frame_rate_hz
+        elif hasattr(self.extractor, "frame_rate_hz"):
+            self.frame_rate_hz = float(self.extractor.frame_rate_hz)
+
+        if self.window_ms is not None:
+            self.window_length = max(2, int(round(self.window_ms * self.frame_rate_hz / 1000.0)))
+        if self.hop_ms is not None:
+            self.hop = max(1, int(round(self.hop_ms * self.frame_rate_hz / 1000.0)))
 
         rng = np.random.default_rng(17)
         self._frames = 0.015 * rng.normal(size=(self.max_frames, self.dimension))

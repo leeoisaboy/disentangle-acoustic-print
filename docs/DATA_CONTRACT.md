@@ -1,20 +1,22 @@
 # Data Contract
 
-## Trajectory
+## Trajectory & Feature Frontends
 
 | Field | Type | Shape | Requirement |
 | --- | --- | --- | --- |
 | `frames` | `np.ndarray`, `float64` | `[time, dimension]` | At least 2 time steps; finite values |
+| `frame_rate_hz` | `float` | scalar | Frames per second (e.g., `50.0` for WavLM/Whisper, `100.0` for 10 ms Log-Mel) |
 
-Each row is one ordered acoustic latent frame. The package does not decode audio or assume a particular model. Keep the extractor, layer index, frame rate, and normalization policy fixed within one experiment.
+Each row is one ordered acoustic latent frame. Core operators are pure NumPy and model-agnostic. Implement `FeatureFrontend.extract_with_rate(samples, sample_rate) -> (frames, frame_rate_hz)` (or use `MelDeltaExtractor`, `HiddenStateBridge`, `OnnxEncoderFrontend`, or `PyTorchSSLFrontend`) to plug in any frontend without changing core code.
 
-Use `arc_length_resample(frames, output_length)` when speaking-rate changes should not alter the temporal descriptor. It samples the path at equal cumulative chord length. The original chronological order must still be correct.
+Use `arc_length_resample(frames, output_length, trim_silence=True, smooth_alpha=0.5)` on noisy or silence-padded real audio so speaking-rate shifts and leading/trailing noise do not distort the temporal descriptor.
 
 ```python
 import numpy as np
-from disentangle_acoustic_print import extract_evidence
+from disentangle_acoustic_print import MelDeltaExtractor, extract_evidence
 
-frames = np.load("trajectory.npy")
+frontend = MelDeltaExtractor(n_mels=80, hop_ms=10.0, include_delta=False, normalize_utterance=False)
+frames, fps = frontend.extract_with_rate(waveform, sample_rate=16000)
 evidence = extract_evidence(frames)
 ```
 
@@ -49,9 +51,13 @@ bank.enroll("phrase-a", [sample_2, sample_3])  # equivalent to one batch of thre
 
 Samples for one key should share the extractor, layer, dimension, normalization policy, and frame-rate range. A query must use the same setup as enrollment. The bank stores both a unit-norm fingerprint and a structured-evidence vector. Set `evidence_weight` in `[0, 1]` to trade cosine retrieval against z-scored evidence distance.
 
-## Online Matching
+## Online Matching & Background Calibration
 
-`OnlineMatcher` accepts either `window_lengths=(9, 12, 15)` or `scales=(0.75, 1.0, 1.25)` relative to `window_length`. Returned windows are filtered with temporal IoU NMS. Use `iou_threshold` in `[0, 1]`; `top_k` then means distinct events rather than adjacent offsets.
+`OnlineMatcher` accepts either frame-based `window_lengths=(9, 12, 15)` / `window_length=12`, template-adaptive `window_length="auto"`, or frame-rate-agnostic millisecond sizing (`window_ms=400.0, hop_ms=40.0, frame_rate_hz=50.0`) with `scales=(0.75, 1.0, 1.25)`. Returned windows are filtered with temporal IoU NMS (`iou_threshold` in `[0, 1]`).
+
+For open continuous streams, call `bank.calibrate_background(neg_streams, target_fa_per_hour=1.0, frame_rate_hz=50.0)` on unlabeled background audio to compute per-keyword z-score normalization and dynamic FA/hr trigger thresholds, then enable `OnlineMatcher(..., use_calibration=True)`.
+
+Note: Real-data ablations across Shanghainese, multi-dialect Mandarin, and English show that `evidence_weight=0.0` (pure geometric fingerprint cosine) is optimal for online retrieval; `extract_evidence()` is retained as the white-box diagnostic and 4-track telemetry layer.
 
 ## Recommended Splits
 

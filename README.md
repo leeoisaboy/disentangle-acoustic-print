@@ -7,23 +7,36 @@
 <p align="center">
   <a href="README.en.md"><img alt="English" src="https://img.shields.io/badge/English-README-2f81f7?style=flat-square"></a>
   <a href="https://leeoisaboy.github.io/disentangle-acoustic-print/"><img alt="Live Studio" src="https://img.shields.io/badge/Live_Studio-Acoustic_Print_Studio-0ea5e9?style=flat-square"></a>
+  <img alt="Version" src="https://img.shields.io/badge/version-0.4.0-6366f1?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-23%20passing-2ea44f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-30%20passing-2ea44f?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-555555?style=flat-square">
 </p>
 
-<h1 align="center">Disentangle-Acoustic-Print</h1>
+<h1 align="center">Disentangle-Acoustic-Print (v0.4)</h1>
 
-<p align="center"><strong>把一段冻结语音轨迹拆成可以解释的时序视图，并让每个算子实时显示出来。</strong></p>
+<p align="center"><strong>零训练、纯 NumPy 的跨音色时序解耦与流式声学指纹 SDK，配备实时四轨白盒声学工作台。</strong></p>
 
+> **白盒语音检索三部曲（White-Box Speech Retrieval Trilogy）**
+> 1. **[Disentangle-Acoustic-Print](https://github.com/leeoisaboy/disentangle-acoustic-print)**（本仓库）：零训练、纯 NumPy 几何解耦、层探针与超低延迟端侧粗召回 / 白盒四轨示波器（CPU RTF `0.013–0.045`）。
+> 2. **[AudioLLM-Latent-KWS](https://github.com/leeoisaboy/audiollm-latent-kws)**：录 1–3 条样音即可跨方言高精度定位的帧级 DTW / AudioLLM 潜空间检词系统（连续流严格 FA/hr 门禁）。
+> 3. **[Dialect-CrossModal-Align](https://github.com/leeoisaboy/dialect-crossmodal-align)**：不录样音、只写音素/IPA 拼写即可零样本检索方言新词的跨模态对齐框架。
 
-## 方法流程图 · Architecture Pipeline
+---
+
+## v0.4 架构总览
 
 <p align="center">
-  <img src="docs/assets/pipeline_architecture.jpg" alt="Disentangle-Acoustic-Print 跨音色声学指纹解耦架构流程图" width="1000" />
+  <img src="docs/assets/pipeline_architecture.jpg" alt="Disentangle-Acoustic-Print v0.4 四阶段架构总览图" width="1100" />
 </p>
 
-## 正在运行的界面
+v0.4 将原有的合成轨迹原型全面推进到**三套公开真实语料 × 三轨真实特征前端**的严格跨说话人实证验收，并收口为通用的两层架构：
+- **纯 NumPy 核心 SDK（`pip install disentangle-acoustic-print`）**：零模型训练、零硬性深度学习依赖，通过帧率无关的 `FeatureFrontend` 协议接入任意前端（端侧 Log-Mel / ONNX / WavLM / Whisper），4 步完成 `前端抽帧 → 低秩软正交去音色 → 模板注册与背景 FA/hr 校准 → 多尺度滑窗定位`。
+- **四轨白盒工作台（`pip install "disentangle-acoustic-print[studio]"`）**：60 FPS 浏览器本地示波器，将波形速度着色、动力学 CUSUM 变点、音色剥离能量、等弧长标尺与四分区指纹条形码对齐在同一条时间轴上实时透视。
+
+---
+
+## 正在运行的界面（Acoustic Print Studio）
 
 <p align="center">
   <a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">
@@ -33,226 +46,127 @@
 
 <p align="center"><strong><a href="https://leeoisaboy.github.io/disentangle-acoustic-print/">▶ 进入在线 Acoustic Print Studio</a></strong></p>
 
-这段动图截自真实运行页面。四轨结果排布在一条无断层的连续全景长卷轴上：首屏平滑绘制完当前发音后，你可以直接在图表上左右拖拽或滑动下方平移条，无缝浏览整段 240 帧连续声学轨迹。首屏与顶部导航栏均提供显眼的实时麦克风入口，开口说话即可在纯浏览器本地以 60 FPS 驱动波形速度着色、动力学变点、等弧长标尺与四层指纹纹理，并支持一键冻结观察、录入个人口令、拖入 WAV 与导出遥测 JSON，音频全程不上传。
-
-四轨把同一份遥测数据拆成四种观察方式。
-
-| 轨道 | 页面中的内容 | 对应实现 |
+| 轨道 | 页面中的内容 | 对应模块 |
 | --- | --- | --- |
-| Track 01 | 速度着色波形、柔和匹配光带、temporal IoU 抑制 | `OnlineMatcher`、`decompose().speed` |
-| Track 02 | 瞬时速度、双峰、零均值 CUSUM 变点、轨迹折返角 | `extract_evidence`、`compute_cusum_curve` |
-| Track 03 | 线性刻度与等弧长刻度对照、音色子空间剥离能量 | `arc_length_resample`、`SpeakerSubspaceProjector` |
-| Track 04 | Static、Delta、Speed、Accel 连续指纹纹理 | `fingerprint`、`decompose_fingerprint_barcode` |
+| Track 01 | 速度着色波形、柔和匹配光带、Temporal IoU NMS 抑制 | `OnlineMatcher`、`decompose().speed` |
+| Track 02 | 瞬时速度、双峰、零均值 CUSUM 变点、轨迹折返角（白盒诊断层） | `extract_evidence`、`compute_cusum_curve` |
+| Track 03 | 线性刻度 vs 等弧长刻度对照、说话人子空间剥离能量表 | `arc_length_resample`、`SpeakerSubspaceProjector` |
+| Track 04 | Static、Delta、Speed、Accel 四分区连续指纹纹理 | `fingerprint`、`decompose_fingerprint_barcode` |
 
-<details>
-<summary>展开四轨全页截图</summary>
-<p align="center">
-  <img src="docs/assets/studio-full.png" alt="Acoustic Print Studio 四轨长卷轴全页界面" width="1100" />
-</p>
-</details>
+---
 
-## 为什么做这个项目
+## 真实公开数据五组实证研究（MagicHub 沪语 · KeSpeech 多方言 · LibriPhrase 英语）
 
-智能家居和适老化设备会不断遇到新的方言指令。同一个词换一个人说，音色变了，语速也变了。检索系统如果只保存一个平均向量，容易把说话人的音色当成词的一部分；如果只保留帧间运动，发音人的节奏差异又会把同一句话推得很远。
+所有实证均在严格**说话人零重叠（0 speaker overlap）**协议下完成（`SpeakerSubspaceProjector` 仅拟合背景与注册说话人，严禁接触任何测试说话人），同一批音频横向对比三类前端：
+- **端侧轻量轨**：80 维纯 NumPy Log-Mel（100 Hz，流式安全无分段 CMVN 漂移）
+- **通用自监督轨**：`microsoft/wavlm-large`（50 Hz，1024 维，逐层探针锁定 L14 + 深层对照 L21）
+- **跨语种大模型轨**：`openai/whisper-tiny` Encoder（50 Hz，384 维，逐层探针锁定 L4）
 
-这个项目研究冻结语音表征中的内容与音色如何在时间轴上混在一起。仓库把一段隐状态轨迹拆成静态、运动、残差、速度四类视图，用结构化证据补齐边界与节奏，用多尺度在线匹配定位事件。核心检索与几何算子只依赖 NumPy，不训练额外匹配器。
+完整原始指标保存在 [reports/real_data_benchmark_v04.json](reports/real_data_benchmark_v04.json)，门禁自动校验结果见 [reports/release_gate_verdict_v04.json](reports/release_gate_verdict_v04.json)。
 
-Studio 把这些中间量直接画出。波形、变点、峰、重采样刻度、音色剥离能量和四分区指纹都能在同一时间轴上核对，算法出错时也能看见错在哪个环节。
-
-## 项目追问什么
-
-1. 静态均值与一阶运动，哪一种视图更能跨说话人保留内容。
-2. 同一个人改变语速后，怎样用弧长参数化把节奏从形状里拿走。
-3. 音色差异表现为特征子空间旋转时，低秩正交投影能否降低泄漏。
-4. 结构化证据与声学指纹怎样融合，什么时候有效，什么时候只增加噪声。
-5. 在线扫描怎样避免同一个事件附近反复返回高度重叠的窗口。
-6. 这些判断能否被同一份遥测包还原，并在浏览器里逐帧检查。
-
-## 实验证据
-
-当前代码提供一套可复算的研究基线。确定性合成夹具负责验证接口、数值契约和失败模式，真实语音结论仍需要外部音频与冻结特征。此前本地探索日志留下的证据如下。
-
-| 探针 | 结果 | 说明 |
-| --- | ---: | --- |
-| 真实时序形状 Top-1 | 21.32% | 局部运动携带可用的词条信息 |
-| 打乱帧序后的 Top-1 | 14.60% | 破坏顺序后下降 6.72 点 |
-| 单向量检索上限 | 58.05% | 静态与速度视图的参考上限 |
-| 结构化证据 oracle 上限 | 70.43% 至 71.76% | 证据摘要存在明显余量 |
-
-这些数字来自原始本地探索日志。它们说明帧序确实包含信息，也说明结构化证据有潜力。oracle 上限不能直接当作在线增益，真实收益仍取决于校准、候选池和融合权重。
-
-当前版本能够直接验证以下工程契约。
-
-- 四类时序视图都有独立实现，弧长重采样可以作为默认时序归一化。
-- 零均值 CUSUM、局部峰筛选和最小间距抑制替代了退化的统计量。
-- 指纹与模板统一 L2 归一化，增量注册按累计样本数更新。
-- 证据校准只在注册数据变化时重算，在线混合检索直接复用缓存。
-- 多尺度窗口经过 temporal IoU NMS，返回结果不会再被相邻窗口挤满。
-- 音频桥、流式滚动缓冲区和四轨遥测均有端到端测试。
-
-## 方法
+### 1. 层探针与说话人正交投影帕累托前沿（Study 1 & Study 2C）
 
 <p align="center">
-  <img src="docs/assets/pipeline.zh.png" alt="从隐状态轨迹到四轨在线示波器的流程" />
+  <img src="docs/assets/layer_probe_and_projector_pareto.png" alt="Study 1 层探针与 Study 2C 正交投影秩扫描帕累托前沿" width="1080" />
 </p>
 
-给定轨迹 $H \in \mathbb{R}^{T \times D}$，仓库提供四种互补视图。
+- **Study 1（层探针锁定最佳解耦层）**：`layerwise_probe` 在 WavLM-Large 全部 24 层上自动测出中层内容/说话人方差比峰值位于 **L14（0.956）**，深层对照 **L21（0.817）** 明显回落；实测跨说话人检索 L14 在全部三套语料上均大幅领先 L21（如 L3 英语 Top-1 `88.1%` vs `61.9%`）。Whisper-tiny 4 层编码器单调上升并在 **L4（1.927）** 达峰，零训练跨说话人孤立词 Top-1 分别达 **L3 英语 96.0%（EER 1.6%）**、**L2 多方言 61.1%（EER 13.9%）**、**L1 沪语 56.1%（EER 20.0%）**。
+- **Study 2A（四视图单挑）**：在原始 Log-Mel 与 WavLM 上，去均值后的 **`residual`（$H_t - \mu_H$）是跨说话人最抗音色漂移的单视图**，比静态均值 `static` 高出 **+10 至 +25 个百分点**（如 L1 WavLM `32.2%` vs `16.7%`，L2 Mel `35.0%` vs `9.4%`）；而纯 1D 速度剖面 `velocity` 单独区分力极弱（`4%–9%`）。因此 v0.4 新增 `fingerprint(..., preset="content")`（`0.45 Static + 0.35 Residual + 0.20 Delta`）。
+- **Study 2C（正交音色投影低秩律）**：在 **3/3 套公开语料** 上，低秩 `SpeakerSubspaceProjector`（`rank=2..4` 或 `variance_threshold + max_rank + shrinkage`）显著降低跨说话人 EER；但高秩（`rank=16, 32`）会过度剥离发音内容导致掉点。
 
-| 视图 | 构造 | 作用 |
-| --- | --- | --- |
-| 静态中心 | $\mu_H = T^{-1}\sum_t H_t$ | 跨音色的内容锚点 |
-| 差分形状 | $\Delta H_t = H_{t+1}-H_t$，可先做等弧长重采样 | 发音过渡方向 |
-| 残差轨迹 | $H_t-\mu_H$ | 相对词条中心的运动位置 |
-| 速度剖面 | $\lVert \Delta H_t \rVert_2$ | 快慢、长短与局部能量证据 |
+| 公开语料（说话人零重叠） | 纯均值基线 EER (`WavLM L14`) | `r=0` 原始指纹 EER | 低秩投影最佳 EER (`r=2..5`) | EER 绝对下降 | `Whisper L4` 零训练 Top-1 / EER |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **L1 沪语 (MagicHub)** | 41.7% | 37.2% | **32.2%** (`r=2`) | **-9.5 pp** | **56.1% / 20.0%** |
+| **L2 多方言 (KeSpeech)** | 27.2% | 25.0% | **20.7%** (`r=2`, Top-1 +11.1 pp) | **-6.5 pp** | **61.1% / 13.9%** |
+| **L3 英语 (LibriPhrase)** | 12.5% / 18.2% | 18.2% | **15.5%** (`r=2`, Top-1 +5.7 pp) | **-2.7 pp** | **96.0% / 1.6%** |
 
-结构化证据包含响应强度、零均值 CUSUM 变点、两个分隔峰、速度统计、转角统计和归一化边界轮廓。证据向量按注册样本做 Z-score 校准，再与指纹余弦得分融合。
+### 2. 结构化证据在线负结果审计 & 等弧长防噪增益（Study 3 & Study 2B）
 
-工程上有五个关键选择。
+<p align="center">
+  <img src="docs/assets/evidence_audit_and_tempo_guard.png" alt="Study 3 结构化证据在线权重审计与 Study 2B 等弧长防噪护栏增益" width="1080" />
+</p>
 
-- `arc_length_resample()` 按累积弦长等距采样，降低说话速度变化对时序描述的影响。
-- `SpeakerSubspaceProjector` 从说话人均值估计低秩音色子空间，再把该子空间从轨迹中投影掉。
-- `EnrollmentBank` 保存单位指纹、累计均值和证据样本。校准器缓存在下一次注册前一直有效。
-- `OnlineMatcher` 支持多个窗口长度，并用 temporal IoU NMS 抑制重叠结果。
-- `RollingAcousticStream` 把 16 kHz 音频、滚动环形缓冲区、实时注册和四轨遥测串成同一条数据链。
+- **Study 3（诚实报告负结果：`evidence_weight` 在线单调降分）**：在全部 **3 语种 × 3 前端 × 干净/带噪** 组合上，将 `evidence_weight` 从 `0.00` 增至 `0.10 / 0.25 / 0.50` 均会导致在线跨说话人 Top-1 与 EER **单调恶化**（例如 L3 Whisper Clean 从 `90.9%` 降至 `87.5% → 67.0% → 30.7%`）。v0.4 据此将全栈默认 `evidence_weight` 严格收口为 **`0.0`**，而将 `extract_evidence()`（零均值 CUSUM、双峰、折返角）明确定位为**白盒诊断与 Studio 四轨可视化层**。
+- **Study 2B（等弧长重采样的“虚假弧长”隐患与 VAD/低通修复）**：在 `0.6×` 慢速、`1.5×` 快速不变调变速以及首尾填充 150 ms 噪声静音（10 dB SNR）的真实场景下，未防护的 `arc_raw` 会被噪声抖动制造的虚假弦长拉偏；开启 v0.4 内置的轻量端点裁剪与双向一阶低通护栏（`arc_length_resample(..., trim_silence=True, smooth_alpha=0.5)`）后，跨说话人 Top-1 在变速与带噪条件下一致回升 **+6.1 至 +12.8 个百分点**（如 L1 WavLM `0.6×` 从 `13.3% → 24.4%`，L2 Whisper 带噪从 `6.1% → 18.9%`）。
 
-## 使用 Studio
+### 3. 连续未切分语音流校准与流式等价性（Study 4 & Study 5）
 
-在线版直接打开浏览器即可。页面进入后会自动演示多尺度捕获，也可以点击方言词条、调整语速与音色干扰，或开启麦克风流。
+- **Study 4（连续流校准跃升与诚实能力边界）**：
+  - 未校准的孤立模板 + 全局 40 词 `argmax` 滑窗在连续语音流上会出现严重的枢纽词偏置与上下文漂移（Event AUC 仅 `0.017–0.028`）。
+  - 引入 v0.4 的**同上下文模板 + 逐词中位窗长 + `EnrollmentBank.calibrate_background()` 逐词背景 Z-Norm** 后，连续流 Event AUC @ IoU≥0.5 在 L1 沪语跃升至 **0.7509**（+73.4 pp），在 L2 多方言跃升至 **0.8103**（+78.2 pp），在 L3 英语达 **0.6267**。
+  - **诚实边界说明**：零训练单向量余弦在 40 词连续流上能高效完成粗召回与事件排序（AUC `0.75–0.81`），但在极端严格的 `FA/hr ≤ 1–2` 下 Recall@IoU≥0.5 仅 `7.2%–12.2%`，**未达 80% 严格门禁**；若业务需要未切分长流上的高召回低误报，建议将本库作为前端粗筛/诊断层，与姐妹仓库 [AudioLLM-Latent-KWS](https://github.com/leeoisaboy/audiollm-latent-kws) 的帧级 DTW 精排级联使用。
+- **Study 5（流式环形缓冲等价性与单核 CPU 延迟）**：关闭分段均值漂移（`normalize_utterance=False`）后，100 ms 分块流式推进与离线全流扫描在 L1/L2 真实长流上达成**数学完全等价（Pearson `r = 1.0000`，最大绝对误差 `0.0`，峰值时间戳误差 `0` 帧）**；单核 CPU 实时率 **RTF = `0.0135`（Mel80） / `0.0437`（WavLM-Large 1024 维）**，远低于 `0.2` 门禁。
 
-本地静态运行不需要安装后端依赖。
+### 4. 发布门禁自动验收结果（`python benchmarks/verify_release_gates.py`）
 
-```bash
-python -m http.server 8765 --directory studio
-```
+| 门禁 | 验收标准 | 实测结果 | 状态 |
+| --- | --- | --- | :---: |
+| **Gate 1 跨说话人泛化** | ≥ 2 套公开语料上投影+等弧长显著降 EER | L1 `-9.5 pp`、L2 `-6.6 pp`（**2/3 优于纯均值**；L3 较 `r=0` 指纹亦降 `-2.7 pp`） | **PASS** |
+| **Gate 2 连续流可用性** | FA/hr ≤ 2 时 Event Recall@IoU≥0.5 ≥ 80% | 校准后 Event AUC 跃升至 `0.751–0.810`，但零训练单向量 Recall@0.5 为 `7.2%–8.9%`（诚实记录能力边界） | **BOUNDARY** |
+| **Gate 3 流式等价与延迟** | 离线/流式相关系数 ≥ 0.99，单核 CPU RTF < 0.2 | `r = 1.0000`，`peak_err = 0`，`RTF = 0.0135–0.0450` | **PASS** |
+| **Gate 4 零侵入通用性** | 切换语种/前端零改核心代码，全套单测 100% 通过 | 3 语种 × 3 前端零改核心代码，**30/30 单元测试全过** | **PASS** |
 
-浏览器打开 `http://127.0.0.1:8765`。
+---
 
-需要 WebSocket 服务时启动 FastAPI 入口。
+## 快速上手（4 步纯 NumPy 核心 SDK）
 
-```bash
-python -m pip install -e ".[studio]"
-python -m studio.app --mode fastapi --port 8000
-```
-
-Hugging Face Spaces 或 Gradio 流式页面使用另一个入口。
-
-```bash
-python -m pip install -e ".[spaces]"
-python -m studio.app --mode gradio --port 7860
-```
-
-## 快速开始
+### 安装
 
 ```bash
-python -m venv .venv
-python -m pip install -e .
+# 核心 SDK（仅依赖 NumPy，适合端侧 / 服务端轻量部署）
+pip install -e .
+
+# 可选：启动四轨白盒工作台（FastAPI + HTML5 Canvas）
+pip install -e ".[studio]"
+
+# 可选：接入 ONNX 或 PyTorch/Transformers 预训练前端
+pip install -e ".[onnx]"
+pip install -e ".[torch]"
 ```
 
-Windows PowerShell 使用 `.venv\Scripts\Activate.ps1`。
+### 4 步极简调用
 
 ```python
 from disentangle_acoustic_print import (
     EnrollmentBank,
+    MelDeltaExtractor,
     OnlineMatcher,
     SpeakerSubspaceProjector,
-    make_cross_voice_dataset,
-    make_stream,
 )
 
-dataset = make_cross_voice_dataset(dimensions=16)
+# 1. 统一帧率无关前端（也可替换为 HiddenStateBridge / OnnxEncoderFrontend / PyTorchSSLFrontend）
+frontend = MelDeltaExtractor(n_mels=80, hop_ms=10.0, include_delta=False, normalize_utterance=False)
+enroll_frames, fps = frontend.extract_with_rate(enroll_wav, sample_rate=16000)
+
+# 2. 低秩软正交去音色（严禁使用测试说话人拟合）
 projector = SpeakerSubspaceProjector.fit(
-    dataset["sequences"],
-    dataset["speaker_ids"],
-    rank=2,
+    bg_trajectories, bg_speaker_ids, variance_threshold=0.80, max_rank=4, shrinkage=0.75
 )
 
-frames = dataset["sequences"][0]
-bank = EnrollmentBank(projector=projector, evidence_weight=0.2)
-bank.enroll("phrase-a", [frames])
-print(bank.search(frames)[0])
+# 3. 模板注册 + 无标注背景流 FA/hr 动态阈值校准（默认 evidence_weight=0.0）
+bank = EnrollmentBank(projector=projector, preset="content", trim_silence=True, smooth_alpha=0.5)
+bank.enroll("open-light", [enroll_frames])
+bank.calibrate_background(unlabeled_bg_streams, target_fa_per_hour=1.0, frame_rate_hz=fps)
 
-stream = make_stream(
-    dimensions=16,
-    target=frames.mean(axis=0),
-    insert_start=10,
-    target_length=len(frames),
+# 4. 毫秒/自适应窗长多尺度流式匹配 + Temporal IoU NMS
+matcher = OnlineMatcher(
+    bank, window_length="auto", hop_ms=40.0, frame_rate_hz=fps,
+    scales=(0.75, 1.0, 1.25), iou_threshold=0.4, use_calibration=True,
 )
-locator = OnlineMatcher(
-    bank,
-    window_length=len(frames),
-    scales=(0.75, 1.0, 1.25),
-    hop=2,
-    iou_threshold=0.4,
-)
-print(locator.match(stream)[0])
+matches = matcher.match(stream_frames, top_k=3)
 ```
 
-命令行提供确定性演示与四轨遥测。
+### 启动本地 Studio 与测试
 
 ```bash
-disentangle-acoustic-print demo
-disentangle-acoustic-print evidence
-disentangle-acoustic-print fingerprint
-disentangle-acoustic-print online
-disentangle-acoustic-print telemetry
+# 运行 30 项全量单元测试
+pytest -v
+
+# 复现发布门禁核验
+python benchmarks/verify_release_gates.py
+
+# 启动四轨白盒工作台（FastAPI WebSocket 模式）
+acoustic-print-studio --mode fastapi --port 8000
 ```
 
-## 这个原型有什么意义
-
-它可以作为自监督语音表征的诊断工具。换层、换模型或换池化方式时，四类视图能把内容保持、音色泄漏和时序稳定性拆开报告。`layerwise_probe` 还能直接比较不同特征层的内容方差与说话人方差。
-
-它也可以作为低资源词条检索的基线。新词只需要少量注册轨迹。声学定位给出候选，结构化证据补充边界与节奏线索，在线匹配器在连续流里找事件。Studio 把这套基线变成可操作的实验台，滑杆改变语速、音色和融合权重，画面立即显示各轨响应。
-
-它最有价值的地方在于保留失败。合成数据可以复现，数值契约可以测试，阴性结果可以复核。一个能解释失败的声音检索基线，比一个只在演示里正确的结果更接近可用的研究工具。
-
-## 实验边界
-
-- 仓库只接收 `[time, dimension]` 隐状态轨迹，不包含模型权重、私有清单或远程服务凭证。
-- 合成夹具与 Studio 预设用于接口检查和交互演示，不代表真实吴语或普通话语料上的识别率。
-- `SpeakerSubspaceProjector` 只能使用允许参与建模的注册说话人拟合，查询说话人不应进入估计。
-- temporal IoU 阈值与窗口尺度仍需要按实际帧率、词长和事件密度调整。
-- 历史日志中的 oracle 上限不是线上 Top-1，不能直接用于产品承诺。
-- 浏览器麦克风需要安全上下文或 localhost 权限，首次开启由浏览器弹窗确认。
-
-## 仓库结构
-
-```text
-disentangle_acoustic_print/
-  geometry.py       时序分解、弧长重采样、音色子空间投影
-  probing.py        层探针、排序指标与分组校准
-  evidence.py       CUSUM 变点、峰提取、结构化证据校准
-  fingerprint.py    单位指纹、混合检索、多尺度在线定位
-  synthetic.py      带语速形变与正交旋转的确定性夹具
-  audio_bridge.py   16 kHz WAV 编解码、Mel 轨迹提取与模型桥
-  telemetry.py      四轨白盒遥测序列化
-  stream_engine.py  环形缓冲区、双语音速注册与实时匹配
-  cli.py            JSON 演示与命令行入口
-studio/
-  index.html        无后端四轨 Canvas 示波器
-  static/           浅色界面样式与确定性 Canvas 渲染脚本
-  app.py            FastAPI WebSocket 与统一启动入口
-  gradio_app.py     Hugging Face Spaces 流式界面
-docs/
-  DATA_CONTRACT.md
-  MODULE_MAP.md
-  assets/           横幅、LOGO、流程插图、界面截图与动态预览
-scripts/
-  make_assets.py    生成 README 视觉资产
-tests/
-  23 个数值、音频、遥测与接口回归测试
-```
-
-## 复现与测试
-
-```bash
-python -m compileall -q .
-python -m pytest -q
-```
-
-当前测试结果为 `23 passed`。输入契约见 [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md)，模块职责见 [docs/MODULE_MAP.md](docs/MODULE_MAP.md)。
-
-## 许可
-
-代码使用 MIT License。音频、模型权重和派生特征保留各自原始许可。
-
-**一个值得留下的声音检索基线，应当同时解释它为什么命中，以及它为什么失败。**
+更多契约与模块说明请参阅 [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md) 与 [docs/MODULE_MAP.md](docs/MODULE_MAP.md)。

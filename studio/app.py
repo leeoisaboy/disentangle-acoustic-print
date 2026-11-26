@@ -60,7 +60,7 @@ class StudioSession:
             max_frames=120,
             dimension=16,
             output_length=8,
-            evidence_weight=0.25,
+            evidence_weight=0.0,
             window_length=16,
             scales=(0.75, 1.0, 1.25),
             hop=2,

@@ -1,8 +1,11 @@
 """Cross-voice temporal disentanglement and structured acoustic fingerprints."""
 
 from .audio_bridge import (
+    FeatureFrontend,
     HiddenStateBridge,
     MelDeltaExtractor,
+    OnnxEncoderFrontend,
+    PyTorchSSLFrontend,
     build_mel_filterbank,
     decode_wav_bytes,
     encode_wav_bytes,
@@ -21,6 +24,7 @@ from .evidence import (
     select_peak_indices,
 )
 from .fingerprint import (
+    BackgroundCalibration,
     EnrollmentBank,
     FingerprintMatch,
     OnlineMatcher,
@@ -57,6 +61,7 @@ __all__ = [
     "calibrated_evidence_distance",
     "extract_evidence",
     "select_peak_indices",
+    "BackgroundCalibration",
     "EnrollmentBank",
     "FingerprintMatch",
     "OnlineMatcher",
@@ -73,8 +78,11 @@ __all__ = [
     "calibrate_response",
     "evidence_distance",
     "evidence_vector",
+    "FeatureFrontend",
     "MelDeltaExtractor",
     "HiddenStateBridge",
+    "OnnxEncoderFrontend",
+    "PyTorchSSLFrontend",
     "build_mel_filterbank",
     "decode_wav_bytes",
     "encode_wav_bytes",

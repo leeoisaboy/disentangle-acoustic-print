@@ -146,14 +146,39 @@ def encode_wav_bytes(samples: np.ndarray, sample_rate: int = 16000) -> bytes:
     return buffer.getvalue()
 
 
+class FeatureFrontend:
+    """Unified frame-rate-aware frontend contract returning ``(frames, frame_rate_hz)``."""
+
+    @property
+    def frame_rate_hz(self) -> float:
+        raise NotImplementedError
+
+    @property
+    def dimension(self) -> int:
+        raise NotImplementedError
+
+    def extract(self, samples: np.ndarray, sample_rate: int | None = None) -> np.ndarray:
+        frames, _ = self.extract_with_rate(samples, sample_rate=sample_rate)
+        return frames
+
+    def extract_with_rate(
+        self,
+        samples: np.ndarray,
+        sample_rate: int | None = None,
+    ) -> tuple[np.ndarray, float]:
+        raise NotImplementedError
+
+
 @dataclass
-class MelDeltaExtractor:
+class MelDeltaExtractor(FeatureFrontend):
     """CPU-only sub-millisecond acoustic feature extractor producing ``[time, dimension]``.
 
-    Converts 16 kHz audio into 20 ms windowed frames (default hop 20 ms = 50 fps),
+    Converts 16 kHz audio into windowed frames (default hop 20 ms = 50 fps),
     computing log-Mel filterbank energies and optionally appending first-order
     articulatory delta features so that hidden trajectories reflect both formant
     place and rapid consonant transitions.
+
+    Set ``normalize_utterance=False`` for strict chunk-to-offline streaming parity.
     """
 
     sample_rate: int = 16000
@@ -162,6 +187,7 @@ class MelDeltaExtractor:
     n_mels: int = 8
     include_delta: bool = True
     pre_emphasis: float = 0.97
+    normalize_utterance: bool = True
 
     def __post_init__(self) -> None:
         if self.sample_rate < 1000:
@@ -177,6 +203,10 @@ class MelDeltaExtractor:
             n_fft=self.n_fft,
             n_mels=self.n_mels,
         )
+
+    @property
+    def frame_rate_hz(self) -> float:
+        return float(self.sample_rate / self.hop_length)
 
     @property
     def dimension(self) -> int:
@@ -228,8 +258,8 @@ class MelDeltaExtractor:
         spectrum = np.abs(np.fft.rfft(emph_frames, n=self.n_fft, axis=1)) ** 2
         mel_energy = spectrum @ self._mel_basis.T
         log_mel = np.log(np.maximum(mel_energy, 1e-8))
-        # Center per-utterance channel offset while preserving trajectory geometry
-        log_mel = log_mel - np.mean(log_mel, axis=0, keepdims=True)
+        if self.normalize_utterance:
+            log_mel = log_mel - np.mean(log_mel, axis=0, keepdims=True)
 
         if not self.include_delta:
             return log_mel, envelope
@@ -245,8 +275,16 @@ class MelDeltaExtractor:
         features, _ = self.extract_with_envelope(samples, sample_rate=sample_rate)
         return features
 
+    def extract_with_rate(
+        self,
+        samples: np.ndarray,
+        sample_rate: int | None = None,
+    ) -> tuple[np.ndarray, float]:
+        """Return ``(frames [T, D], frame_rate_hz)``."""
+        return self.extract(samples, sample_rate=sample_rate), self.frame_rate_hz
 
-class HiddenStateBridge:
+
+class HiddenStateBridge(FeatureFrontend):
     """Adapter that wraps an optional neural encoder (WavLM / HuBERT / Whisper) or callable.
 
     Falls back cleanly to ``MelDeltaExtractor`` when no neural callable is supplied,
@@ -258,14 +296,24 @@ class HiddenStateBridge:
         encoder_fn: Callable[[np.ndarray, int], np.ndarray] | None = None,
         fallback: MelDeltaExtractor | None = None,
         target_dimension: int | None = None,
+        frame_rate_hz: float | None = None,
     ) -> None:
         self.encoder_fn = encoder_fn
         self.fallback = fallback or MelDeltaExtractor()
         self.target_dimension = target_dimension
+        self._frame_rate_hz = float(frame_rate_hz) if frame_rate_hz is not None else self.fallback.frame_rate_hz
 
     @property
     def sample_rate(self) -> int:
         return self.fallback.sample_rate
+
+    @property
+    def frame_rate_hz(self) -> float:
+        return self._frame_rate_hz
+
+    @property
+    def dimension(self) -> int:
+        return int(self.target_dimension) if self.target_dimension is not None else self.fallback.dimension
 
     def extract_with_envelope(
         self,
@@ -301,6 +349,112 @@ class HiddenStateBridge:
     def extract(self, samples: np.ndarray, sample_rate: int | None = None) -> np.ndarray:
         frames, _ = self.extract_with_envelope(samples, sample_rate=sample_rate)
         return frames
+
+    def extract_with_rate(
+        self,
+        samples: np.ndarray,
+        sample_rate: int | None = None,
+    ) -> tuple[np.ndarray, float]:
+        return self.extract(samples, sample_rate=sample_rate), self.frame_rate_hz
+
+
+class OnnxEncoderFrontend(FeatureFrontend):
+    """Optional ONNX Runtime speech encoder adapter (requires ``onnxruntime``)."""
+
+    def __init__(
+        self,
+        model_path: str,
+        *,
+        sample_rate: int = 16000,
+        frame_rate_hz: float = 50.0,
+        dimension: int = 768,
+        input_name: str | None = None,
+        output_index: int = 0,
+    ) -> None:
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise RuntimeError(
+                "OnnxEncoderFrontend requires onnxruntime. Install with: pip install 'disentangle-acoustic-print[onnx]'"
+            ) from exc
+        self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+        self.input_name = input_name or self.session.get_inputs()[0].name
+        self.output_index = int(output_index)
+        self.sample_rate = int(sample_rate)
+        self._frame_rate_hz = float(frame_rate_hz)
+        self._dimension = int(dimension)
+
+    @property
+    def frame_rate_hz(self) -> float:
+        return self._frame_rate_hz
+
+    @property
+    def dimension(self) -> int:
+        return self._dimension
+
+    def extract_with_rate(
+        self,
+        samples: np.ndarray,
+        sample_rate: int | None = None,
+    ) -> tuple[np.ndarray, float]:
+        raw = np.asarray(samples, dtype=np.float32).reshape(-1)
+        if sample_rate is not None and int(sample_rate) != self.sample_rate:
+            raw = resample_waveform(raw.astype(np.float64), int(sample_rate), self.sample_rate).astype(np.float32)
+        outputs = self.session.run(None, {self.input_name: raw[None, :]})
+        frames = np.asarray(outputs[self.output_index], dtype=np.float64)
+        if frames.ndim == 3:
+            frames = frames[0]
+        return frames, self._frame_rate_hz
+
+
+class PyTorchSSLFrontend(FeatureFrontend):
+    """Optional PyTorch / Hugging Face SSL encoder adapter (WavLM / HuBERT / Whisper)."""
+
+    def __init__(
+        self,
+        model_name_or_path: str,
+        *,
+        layer: int = 14,
+        sample_rate: int = 16000,
+        frame_rate_hz: float = 50.0,
+        device: str = "cpu",
+    ) -> None:
+        try:
+            import torch
+            from transformers import AutoModel
+        except ImportError as exc:
+            raise RuntimeError(
+                "PyTorchSSLFrontend requires torch and transformers. Install with: pip install 'disentangle-acoustic-print[torch]'"
+            ) from exc
+        self._torch = torch
+        self.device = torch.device(device)
+        self.model = AutoModel.from_pretrained(model_name_or_path).to(self.device).eval()
+        self.layer = int(layer)
+        self.sample_rate = int(sample_rate)
+        self._frame_rate_hz = float(frame_rate_hz)
+        self._dimension = int(getattr(self.model.config, "hidden_size", 1024))
+
+    @property
+    def frame_rate_hz(self) -> float:
+        return self._frame_rate_hz
+
+    @property
+    def dimension(self) -> int:
+        return self._dimension
+
+    def extract_with_rate(
+        self,
+        samples: np.ndarray,
+        sample_rate: int | None = None,
+    ) -> tuple[np.ndarray, float]:
+        raw = np.asarray(samples, dtype=np.float32).reshape(-1)
+        if sample_rate is not None and int(sample_rate) != self.sample_rate:
+            raw = resample_waveform(raw.astype(np.float64), int(sample_rate), self.sample_rate).astype(np.float32)
+        with self._torch.no_grad():
+            inp = self._torch.from_numpy(raw[None, :]).to(self.device)
+            out = self.model(inp, output_hidden_states=True)
+            hs = out.hidden_states[self.layer][0].float().cpu().numpy().astype(np.float64)
+        return hs, self._frame_rate_hz
 
 
 def synthesize_phrase_waveform(
